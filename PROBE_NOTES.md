@@ -43,3 +43,26 @@ The test harness must keep the `stream=1` WebSocket open across the entire selec
 ## Safety
 
 No storage, power, firmware, or destructive operations were used. The machine password is stored only in 1Password and must not be written to config, logs, tests, or this repository.
+
+## TH41-3 manual findings (photo of official manual, 2026-08-25)
+
+- Hotkey grammar: Right Ctrl pressed twice -> Port No. -> Enter. Right Ctrl specifically.
+- RCtrl x2 [S] Enter: auto-scan toggle. RCtrl x2 [S] [N] Enter: scan interval 5-999s (default 8s).
+- RCtrl x2 [B] Enter: beep toggle. Successful hotkey prefix should beep when beep is on.
+- RCtrl x2 [T] Enter: "detection function" toggle, default OFF (purpose not fully documented).
+- RCtrl x2 [R] Enter: reset the KVM system to solve keyboard/mouse freeze (switch-side reset).
+- RCtrl x2 ESC Enter x3: factory reset (avoid).
+- Physical "Hot key on/off" button exists with a green Hotkey On LED.
+- Note: keyboard/mouse must be plugged into the switch ports marked with the keyboard/mouse icons for hotkeys and mouse-click switching to work.
+
+## Empirical switching log (all via KVMD send_key, stream ws held)
+
+- Storage gadget ON:  hotkeys never worked (matches listing requirement).
+- Immediately after otg_functions start_cdrom/start_flash -> false (USB re-enumeration):
+  ONE sequence worked (2 -> 3, visually confirmed pve3 login).
+- Every subsequent attempt failed (keystrokes pass through to the focused machine):
+  timings 150ms/200ms/300ms/RTT-only, ControlLeft and ControlRight, RCtrl x2 alone,
+  after Escape re-arm keys, after POST /api/hid/reset.
+- Conclusion: the TH41-3 hotkey engine appears to arm on USB (re)enumeration events
+  and disengage afterward. Re-arm recipe to test: bounce the OTG gadget, optionally
+  send [T] (detection) or [R] (switch reset) while armed, then send the select sequence.
