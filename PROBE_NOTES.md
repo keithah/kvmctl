@@ -66,3 +66,35 @@ No storage, power, firmware, or destructive operations were used. The machine pa
 - Conclusion: the TH41-3 hotkey engine appears to arm on USB (re)enumeration events
   and disengage afterward. Re-arm recipe to test: bounce the OTG gadget, optionally
   send [T] (detection) or [R] (switch reset) while armed, then send the select sequence.
+
+## Exhausted remote avenues (2026-08-25, all negative)
+
+- ControlLeft variant (manual says Right Ctrl only - expected fail, confirmed).
+- Timing: 150ms / 200ms / 300ms / RTT-only (~40ms) inter-key gaps.
+- RCtrl x2 alone (no cycle, no switch).
+- 9-minute keystroke silence then single sequence (not a flood lockout).
+- POST /api/hid/reset then sequence (no re-arm).
+- OTG gadget on->off bounce (fresh USB re-enumeration) then sequence (no re-arm).
+- Mouse middle-click switch (manual's mouse-click switching): no effect.
+  REST mouse endpoints confirmed working: send_mouse_move, send_mouse_button.
+
+## Keystroke pass-through proof
+
+Every "failed" sequence leaked its tail into the focused machine's console
+(Digit4/Enter visible at pve3 login). HID typing path is healthy end-to-end;
+only the switch's hotkey engine ignores the prefix.
+
+## Current rack state (left clean)
+
+- Console: pve3 login prompt, no pending password prompt (Ctrl-C sent).
+- Comet storage gadget: start_cdrom=false, start_flash=false (required state).
+- Switch: port 3.
+
+## Blocked on physical checks (needs Keith)
+
+1. TH41-3 physical Hot key on/off button + green Hotkey On LED (manual page XI).
+   If LED is off, hotkeys are disabled at the switch.
+2. Comet USB cable must terminate in the switch port marked with the KEYBOARD
+   icon (dedicated hotkey port), per manual note and product listing.
+3. If both check out: power-cycle the TH41-3 (its own [R] reset is a hotkey,
+   unusable while the engine is disarmed). Then retest immediately.
