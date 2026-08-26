@@ -83,6 +83,17 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                 kw["sleep"] = sleep
             out = surf.verify(arguments["machine"], policy=arguments.get("policy"), **kw)
         elif name == "select":
+            # The verified recipe depends on real timing (120 ms holds / 150 ms
+            # gaps / 8 s + 12 s OTG waits). Never default to a no-op sleep:
+            # require an explicit sleep callable when not running against a
+            # test context.
+            if sleep is None and not bool(context.get("test_mode")):
+                return json.dumps({
+                    "operation": "select", "ok": False,
+                    "error": ("no sleep callable in context; select uses real "
+                              "timing (held keys, OTG waits) and refuses to run "
+                              "with zero delays. Pass sleep or test_mode=true."),
+                })
             out = surf.select(
                 arguments["machine"],
                 verify_policy=arguments.get("verify_policy"),
@@ -93,6 +104,13 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
         elif name == "hid_reset":
             out = surf.hid_reset()
         elif name == "rearm_otg":
+            if sleep is None and not bool(context.get("test_mode")):
+                return json.dumps({
+                    "operation": "rearm_otg", "ok": False,
+                    "error": ("no sleep callable in context; rearm_otg needs "
+                              "real 8 s/12 s waits. Pass sleep or "
+                              "test_mode=true."),
+                })
             out = surf.rearm_otg(sleep=sleep or _no_sleep)
         elif name == "exec_command":
             out = surf.exec_command(arguments["command"],

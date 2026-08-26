@@ -95,8 +95,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None) -> 
         if args.command == "capabilities":
             out = surf.capabilities()
         elif args.command == "snapshot":
-            need_write()
-            out = surf.snapshot(path=args.out)
+            out = surf.snapshot(path=args.out)  # read-only: no --yes gate
         elif args.command == "ocr":
             data = open(args.image, "rb").read() if args.image else None
             out = surf.ocr(data)

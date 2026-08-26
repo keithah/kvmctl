@@ -129,14 +129,34 @@ def execute_switch(
     if hold:
         # Held-key mode: each tap is down -> hold -> up -> inter-key gap.
         # Strictly sequential; never two keys held at once.
-        taps = list(zip(events[0::2], events[1::2]))
-        for n, (down, up) in enumerate(taps):
-            assert down.state == "down" and up.key == down.key
+        taps: list[tuple[KeyEvent, KeyEvent]] = []
+        pending_down: Optional[KeyEvent] = None
+        for ev in events:
+            if ev.state == "down":
+                if pending_down is not None:
+                    raise SwitchProtocolError(
+                        f"profile {profile.name}: held-key mode requires tap "
+                        f"steps; found consecutive press on {ev.key}"
+                    )
+                pending_down = ev
+            else:
+                if pending_down is None or pending_down.key != ev.key:
+                    raise SwitchProtocolError(
+                        f"profile {profile.name}: held-key mode requires tap "
+                        f"steps; unmatched release on {ev.key}"
+                    )
+                taps.append((pending_down, ev))
+                pending_down = None
+        if pending_down is not None:
+            raise SwitchProtocolError(
+                f"profile {profile.name}: held-key mode requires tap steps; "
+                f"unreleased key {pending_down.key}"
+            )
+        for down, up in taps:
             client.key_down(down.key)
             sleep(hold)
             client.key_up(up.key)
-            if n < len(taps):
-                sleep(ikd)  # gap after every tap, including the last
+            sleep(ikd)  # gap after every tap, including the last
     else:
         # Legacy tap mode: gap before every event after the first.
         for i, ev in enumerate(events):

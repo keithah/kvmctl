@@ -14,6 +14,12 @@ def test_public_surface():
 
 def test_no_credentials_in_module_source():
     # The machine password from the live probe must never appear in source.
+    # The literal is itself kept out of the repo: it lives in 1Password under
+    # the GLKVM entry and is exported to this test via KVMCTL_MACHINE_PASSWORD.
+    import os
     import pathlib
+
+    secret = os.environ.get("KVMCTL_MACHINE_PASSWORD")
     src = pathlib.Path(client.__file__).read_text()
-    assert "[REDACTED-DEVICE-CREDENTIAL]" not in src
+    if secret:
+        assert secret not in src
