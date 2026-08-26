@@ -98,3 +98,27 @@ only the switch's hotkey engine ignores the prefix.
    icon (dedicated hotkey port), per manual note and product listing.
 3. If both check out: power-cycle the TH41-3 (its own [R] reset is a hotkey,
    unusable while the engine is disarmed). Then retest immediately.
+
+## RESOLVED: TH41-3 switching recipe (2026-08-25 late)
+
+After Keith power-cycled the switch (LED on, Comet in keyboard port - both verified good),
+the winning repeatable recipe is:
+
+1. OTG gadget bounce (USB attach event arms the hotkey engine):
+   POST /api/system/otg_functions?start_cdrom=true&start_flash=true   (wait 8s)
+   POST /api/system/otg_functions?start_cdrom=false&start_flash=false (wait 12s)
+2. Held-key sequence (taps are filtered by the switch's detector):
+   for key in [ControlRight, ControlRight, Digit<N>, Enter]:
+     send_key key state=true, hold 120ms, state=false, gap 150ms
+3. Wait ~5s, then snapshot verify (stream WS must be re-established after bounce;
+   encoder nudge set_params desired_fps=40 quality=80 revives a 503 streamer).
+
+Evidence: 4 -> Mac mini desktop verified visually (Keyboard Setup Assistant visible);
+then 4 -> 2 verified (clean pve2 login). Earlier 2 -> 3 also matched this pattern.
+
+Side effects to handle in code:
+- OTG bounce kills the streamer: expect one 503, nudge encoder, open fresh stream WS.
+- macOS may pop Keyboard Setup Assistant for the ASIX HID device after switching to
+  the Mac; dismiss with Quit (mouse click works).
+
+Rack state: console on pve2 (port 2), clean login prompt, storage gadget off.
