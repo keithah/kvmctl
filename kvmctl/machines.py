@@ -1,7 +1,7 @@
 """Machine profiles for the TH41-3 rack plus select-with-verification.
 
 Rack mapping (PROBE_NOTES.md):
-    port 1: pve1            (currently not working)
+    port 1: pve1
     port 2: pve2
     port 3: kodi-build      (Kodi build box, M1 Mac mini)
     port 4: pve3
@@ -77,8 +77,8 @@ RACK: dict[str, MachineProfile] = {
         MachineProfile(
             port=1,
             name="pve1",
-            description="Proxmox pve1 (currently not working)",
-            enabled=False,
+            description="Proxmox pve1",
+            enabled=True,
             ocr_patterns=("pve1",),
             prompt_patterns=(r"pve1\s+login:",),
         ),

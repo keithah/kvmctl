@@ -23,7 +23,7 @@ Date: 2026-08-25
 
 ## Switch mapping
 
-- Port 1: pve1 (currently not working)
+- Port 1: pve1 (freshly verified working; `pve1 login:` and `https://192.168.42.3:8006/`)
 - Port 2: pve2 (working; currently selected/verified)
 - Port 3: Kodi build box M1 Mac
 - Port 4: pve3

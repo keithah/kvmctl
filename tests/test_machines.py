@@ -114,11 +114,8 @@ def test_rack_mapping_matches_probe_notes():
     assert {m.name: m.port for m in RACK.values()} == expected
 
 
-def test_pve1_disabled_not_working():
-    assert RACK["pve1"].enabled is False
-    with pytest.raises(SwitchFailure, match="disabled"):
-        select_machine(make_client(FakeKvmd()), SessionState(), "pve1",
-                       options=fast_options())
+def test_pve1_is_enabled_after_live_verification():
+    assert RACK["pve1"].enabled is True
 
 
 def test_unknown_machine_refused_without_hid_traffic():
