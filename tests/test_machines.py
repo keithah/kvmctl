@@ -272,6 +272,30 @@ def test_default_policies_cover_all_machines():
     assert DEFAULT_VERIFY_POLICY["kodi-build"] is VerifyPolicy.FRAME_CHANGE
 
 
+def test_select_does_not_mutate_options_default_policy():
+    fake = FakeKvmd()
+    client = make_client(fake)
+    opts = fast_options()
+    assert opts.verify_policy is None
+    select_machine(client, SessionState(), "pve2", options=opts)
+    assert opts.verify_policy is None
+
+
+def test_frame_comparison_ignores_jpeg_encoding_noise():
+    from io import BytesIO
+    from PIL import Image
+    first = Image.new("RGB", (8, 8), "red")
+    second = Image.new("RGB", (8, 8), "red")
+    buf1, buf2 = BytesIO(), BytesIO()
+    first.save(buf1, format="JPEG", quality=70)
+    second.save(buf2, format="JPEG", quality=90)
+    assert frames_differ(buf1.getvalue(), buf2.getvalue()) is False
+    second.putpixel((0, 0), (0, 0, 255))
+    buf3 = BytesIO()
+    second.save(buf3, format="JPEG", quality=90)
+    assert frames_differ(buf1.getvalue(), buf3.getvalue()) is True
+
+
 # --------------------------------------------------------------------------
 # Safe failure behavior
 # --------------------------------------------------------------------------

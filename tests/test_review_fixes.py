@@ -97,7 +97,7 @@ def test_no_password_literal_in_repo_sources():
             continue
         secret = __import__("os").environ.get("KVMCTL_MACHINE_PASSWORD")
         if not secret:
-            break
+            pytest.skip("KVMCTL_MACHINE_PASSWORD is not configured for this check")
         if secret in (root / f).read_text(errors="replace"):
             bad.append(f)
     assert bad == []

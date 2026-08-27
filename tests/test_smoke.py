@@ -1,5 +1,6 @@
 """Smoke test: import surface and redaction guarantees."""
 from kvmctl import client
+import pytest
 from kvmctl.client import KvmClient
 from kvmctl.keys import char_to_key
 
@@ -20,6 +21,7 @@ def test_no_credentials_in_module_source():
     import pathlib
 
     secret = os.environ.get("KVMCTL_MACHINE_PASSWORD")
+    if not secret:
+        pytest.skip("KVMCTL_MACHINE_PASSWORD is not configured for this check")
     src = pathlib.Path(client.__file__).read_text()
-    if secret:
-        assert secret not in src
+    assert secret not in src

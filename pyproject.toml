@@ -3,7 +3,7 @@ name = "kvmctl"
 version = "0.1.0"
 description = "KVMD-compatible (PiKVM/GLKVM) client core"
 requires-python = ">=3.9"
-dependencies = ["httpx>=0.24"]
+dependencies = ["httpx>=0.24", "Pillow>=10"]
 
 [project.scripts]
 kvmctl = "kvmctl.cli:main"

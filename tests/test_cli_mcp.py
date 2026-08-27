@@ -61,6 +61,15 @@ def test_cli_select_with_explicit_kvm_transport():
     assert rc == 0
 
 
+def test_cli_select_rejects_ssh_transport(capsys):
+    c, _ = make_client()
+    with pytest.raises(SystemExit):
+        main(["--url", "https://kvm.test", "--yes", "--transport", "ssh",
+              "select", "pve2", "--verify-policy", "none", "--no-rearm",
+              "--settle", "0"], client=c, sleep=lambda _: None)
+    assert "requires --transport kvm" in capsys.readouterr().err
+
+
 def test_mcp_spec_declares_readonly_and_gates():
     for tool in TOOL_SPEC:
         if tool["name"] in ("capabilities", "snapshot", "ocr", "verify"):

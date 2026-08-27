@@ -79,10 +79,7 @@ class KvmClient:
         resp = self._request(
             "POST",
             "/api/auth/login",
-            content="user=%s&passwd=%s" % (
-                httpx.QueryParams({"user": user}).get("user"),
-                httpx.QueryParams({"passwd": password}).get("passwd"),
-            ),
+            data={"user": user, "passwd": password},
             headers={"content-type": "application/x-www-form-urlencoded"},
         )
         token = (resp.get("result") or {}).get("token")

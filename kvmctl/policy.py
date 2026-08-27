@@ -41,6 +41,11 @@ def validate_command(command: str, allowlist: tuple[str, ...]) -> str:
         raise PolicyError(f"unparseable command: {exc}") from exc
     if not words:
         raise PolicyError("empty command")
+    # The runner historically accepts a shell string.  Reject shell syntax
+    # before it reaches that runner; checking argv[0] alone is not sufficient
+    # because `uptime; rm -rf /` still has argv[0] == "uptime".
+    if any(ch in command for ch in ";|&$`()<>\n\r"):
+        raise PolicyError("shell operators and command substitution are not allowed")
     base = words[0]
     if base not in allowlist:
         raise PolicyError(

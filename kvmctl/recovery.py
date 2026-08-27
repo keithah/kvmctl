@@ -55,9 +55,9 @@ def recover_streamer(
                 return False  # expected right after the bounce
             raise
 
-    # Expect one 503 immediately after the bounce; ignore it once.
-    if not snapshot_ok():
-        pass  # tolerated
+    # Probe once immediately after the bounce. A 503 is expected and tolerated;
+    # a successful probe is also fine, and any other API error propagates.
+    snapshot_ok()
 
     params = dict(DEFAULT_NUDGE if nudge is None else nudge)
     client._request("POST", "/api/streamer/set_params", params=params)

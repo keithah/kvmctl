@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Optional
+from typing import Callable, Optional
 
 from kvmctl.client import KvmClient
 from kvmctl.machines import SessionState
@@ -58,11 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _verify_arg(v: bool | str) -> bool | str:
-    return v
-
-
-def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None) -> int:
+def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
+         sleep: Optional[Callable[[float], None]] = None) -> int:
     args = build_parser().parse_args(argv)
     if client is None:
         verify: bool | str = True
@@ -79,7 +76,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None) -> 
 
     surf = SemanticSurface(client, session=SessionState())
     surf.write_enabled = args.yes
-    sleep = _fast_sleep if client._transport is not None else _real_sleep
+    sleep = sleep or _real_sleep
 
     def need_write():
         if not args.yes:
@@ -104,9 +101,11 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None) -> 
         elif args.command == "select":
             need_write()
             need_transport("select")
+            if args.transport != "kvm":
+                raise SystemExit("'select' requires --transport kvm")
             out = surf.select(args.machine, verify_policy=args.verify_policy,
                               rearm=not args.no_rearm, settle_s=args.settle,
-                              sleep=_real_sleep if client._transport is None else _no_sleep_select)
+                              sleep=sleep)
         elif args.command == "hid-reset":
             need_write()
             out = surf.hid_reset()
@@ -131,22 +130,6 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None) -> 
     return 0 if out.get("ok", True) else 1
 
 
-# sleep strategies -----------------------------------------------------------
-
 def _real_sleep(s):
     import time
     time.sleep(s)
-
-
-def _fast_sleep(s):
-    pass  # tests inject a mock transport; don't actually wait
-
-
-def _no_sleep_select(s):
-    pass
-
-
-def _exec_cmd_of(args):
-    # exec-command positional stored under dest "cmd"? argparse maps it to
-    # the subparser attribute name we set below.
-    return args.cmd

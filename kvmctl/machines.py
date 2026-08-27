@@ -190,8 +190,20 @@ class SnapshotSource(Protocol):
 
 
 def frames_differ(a: bytes, b: bytes) -> bool:
-    """Cheap byte-level frame comparison (JPEG bytes differ => scene changed)."""
-    return a != b
+    """Compare decoded pixels, tolerating encoder metadata/compression noise."""
+    try:
+        from PIL import Image, ImageChops, ImageStat
+        import io
+        first = Image.open(io.BytesIO(a)).convert("RGB")
+        second = Image.open(io.BytesIO(b)).convert("RGB")
+        second = second.resize(first.size)
+        diff = ImageChops.difference(first, second)
+        mean = sum(ImageStat.Stat(diff).mean) / 3
+        return mean > 3.0
+    except (ImportError, OSError):
+        # Preserve useful behavior for non-image test doubles and malformed
+        # device responses; valid JPEGs use the perceptual path above.
+        return a != b
 
 
 def verify_frame_change(client: SnapshotSource, baseline: bytes,
@@ -336,11 +348,10 @@ def select_machine(client: KvmClient, session: SessionState, machine_name: str,
         raise SwitchFailure(f"unknown machine {machine_name!r}; known: {sorted(RACK)}") from None
     if not machine.enabled:
         raise SwitchFailure(f"machine {machine_name!r} is disabled (not working); refusing to select")
-    if opts.verify_policy is None:
-        opts.verify_policy = DEFAULT_VERIFY_POLICY[machine.name]
+    verify_policy = opts.verify_policy or DEFAULT_VERIFY_POLICY[machine.name]
 
     baseline: Optional[bytes] = None
-    if opts.verify_policy is VerifyPolicy.FRAME_CHANGE:
+    if verify_policy is VerifyPolicy.FRAME_CHANGE:
         try:
             baseline = client.snapshot_jpeg()
         except Exception as exc:
@@ -362,7 +373,7 @@ def select_machine(client: KvmClient, session: SessionState, machine_name: str,
 
     session.mark_selected(machine)
 
-    if opts.verify_policy is VerifyPolicy.NONE:
+    if verify_policy is VerifyPolicy.NONE:
         # Explicitly unverified, not trusted: caller must verify separately.
         rec = session.current
         assert rec is not None
@@ -371,7 +382,7 @@ def select_machine(client: KvmClient, session: SessionState, machine_name: str,
 
     try:
         ok, detail = run_verify_policy(
-            opts.verify_policy, client, machine, baseline,
+            verify_policy, client, machine, baseline,
             attempts=opts.verify_attempts, delay=opts.verify_delay, sleep=sleep,
         )
     except Exception as exc:
