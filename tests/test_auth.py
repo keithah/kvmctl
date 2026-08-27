@@ -31,6 +31,18 @@ def test_login_posts_form_and_stores_token(fake):
     assert "application/x-www-form-urlencoded" in captured["ct"]
 
 
+@pytest.mark.parametrize("password", ["pa&ss", "p+w", "50%off", "hash#tag"])
+def test_login_form_encodes_special_password_characters(fake, password):
+    from urllib.parse import quote_plus
+    fake.add("POST", "/api/auth/login",
+             lambda req: (200, {"ok": True, "result": {"token": "tok"}}))
+    c = build(fake)
+    c.login("admin", password)
+    assert fake.requests[-1]["content"].decode() == (
+        "user=admin&passwd=" + quote_plus(password)
+    )
+
+
 def test_authenticated_requests_use_token_header(fake):
     fake.token = "tok123"
     fake.add("GET", "/api/auth/check", lambda r: (200, {"ok": True, "result": {"active": True}}))

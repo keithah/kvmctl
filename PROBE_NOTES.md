@@ -6,7 +6,8 @@ Date: 2026-08-25
 
 - GLKVM reachable at `https://192.168.42.223` (`glkvm.local` via Host header).
 - Login endpoint requires URL-encoded form fields: `user=admin&passwd=...`.
-- The supplied machine password `[REDACTED-DEVICE-CREDENTIAL]` authenticated successfully for the GLKVM admin account.
+- The supplied machine password `[REDACTED-DEVICE-CREDENTIAL]` authenticated
+  successfully for the GLKVM admin account.
 - Authenticated API requests use the lowercase `token:` header. Bearer auth and cookies do not work.
 - `/api/auth/check` returns `ok: true` with that header.
 - `/api/info` reports KVMD `4.82`, ustreamer `6.13`, ARM/RV1126 platform, and WebRTC/Janus/Pion extras.
@@ -22,7 +23,7 @@ Date: 2026-08-25
 
 ## Switch mapping
 
-- Port 1: pve1 (currently not working)
+- Port 1: pve1 (freshly verified working; `pve1 login:` and `https://192.168.42.3:8006/`)
 - Port 2: pve2 (working; currently selected/verified)
 - Port 3: Kodi build box M1 Mac
 - Port 4: pve3

@@ -30,6 +30,7 @@ class KvmClient:
         *,
         verify: bool | str = True,
         timeout: float = 10.0,
+        host: Optional[str] = None,
     ):
         # TLS verification is explicit: True, False, or a CA bundle path.
         self.verify = verify
@@ -38,6 +39,7 @@ class KvmClient:
         self._credentials: Optional[tuple] = None
         self._transport: Optional[httpx.BaseTransport] = None  # test injection point
         self._timeout = timeout
+        self.host = host
 
     # -- plumbing ---------------------------------------------------------
 
@@ -45,6 +47,8 @@ class KvmClient:
         headers = {}
         if self.token:
             headers["token"] = self.token
+        if self.host:
+            headers["host"] = self.host
         self._last_headers = dict(headers)
         return httpx.Client(
             base_url=self.base_url,
@@ -79,10 +83,7 @@ class KvmClient:
         resp = self._request(
             "POST",
             "/api/auth/login",
-            content="user=%s&passwd=%s" % (
-                httpx.QueryParams({"user": user}).get("user"),
-                httpx.QueryParams({"passwd": password}).get("passwd"),
-            ),
+            data={"user": user, "passwd": password},
             headers={"content-type": "application/x-www-form-urlencoded"},
         )
         token = (resp.get("result") or {}).get("token")
@@ -122,12 +123,23 @@ class KvmClient:
     def capabilities(self) -> dict[str, bool]:
         info = self.get_info()
         extras = info.get("extras") or {}
+        system = info.get("system") or {}
+        system_streamer = system.get("streamer") or {}
+        hid_info = info.get("hid") or {}
         caps = {
-            "hid": bool(info.get("hid", {}).get("enabled")),
-            "stream": bool(info.get("streamer", {})),
+            "hid": bool(hid_info.get("enabled")),
+            "stream": bool(info.get("streamer", {})) or bool(system_streamer),
             "ocr": False,
             "switch": False,
         }
+        # Older/embedded KVMD builds omit HID from /api/info. Probe the
+        # canonical read-only endpoint when the summary field is absent.
+        if "hid" not in info:
+            try:
+                hid = self._request("GET", "/api/hid").get("result", {})
+                caps["hid"] = bool(hid.get("enabled")) and bool(hid.get("connected", True))
+            except self.ApiError:
+                pass
         if "ocr" in extras:
             ocr = extras["ocr"] or {}
             langs = [l for l in (ocr.get("languages") or {}) if l != "--"]
