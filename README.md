@@ -1,78 +1,116 @@
 # kvmctl
 
-Safe, capability-driven orchestration for KVMD-compatible PiKVM/GLKVM devices and external HDMI/KVM switches.
+A small, safety-first command-line tool for controlling KVMD-compatible KVM devices such as PiKVM and GLKVM.
 
-This project provides:
+Use `kvmctl` to inspect a device, capture its screen, verify a machine, and—when you explicitly authorize it—select a connected machine or run a limited command.
 
-- A Python client for GLKVM/KVMD authentication, capabilities, HID, snapshots, OCR, and streamer recovery.
-- A verified Terived TH41-3 HDMI-switch driver using the switch's required held-key timing and USB re-arm sequence.
-- Named machine profiles with explicit selection state and screen verification.
-- A CLI and semantic MCP surface with read/write policy gates and machine-readable evidence.
-- Extensible machine profiles with configurable port limits; the included rack is the
-  verified four-port setup, while other switch profiles can be added without changing
-  the client or semantic surface.
+> **Status:** Experimental and hardware-tested. The client targets KVMD-compatible devices; switch profiles may need adjustment for your hardware.
 
-## Hardware verified
+## What you can do
 
-- GL.iNet GLKVM Comet, KVMD 4.82
-- Terived TH41-3 four-port HDMI/KVM switch
-- Rack mapping: port 1 pve1, port 2 pve2, port 3 Kodi build box/M1 Mac mini, port 4 pve3
+- Discover device capabilities
+- Capture a JPEG snapshot of the current screen
+- Verify that the expected machine is on screen
+- Select a named machine through a configured KVM switch
+- Reset HID or re-arm the USB/OTG connection when needed
+- Run explicitly allowlisted SSH commands through a configured integration
+- Consume the same semantic operations from the Python API or MCP surface
 
-The TH41-3 requires the Comet USB cable in its keyboard-marked port, the physical Hot key switch enabled, storage gadgets off, and the following sequence:
+## Quick start
 
-1. OTG gadget bounce to trigger USB re-enumeration.
-2. Right Ctrl twice, port digit, Enter; each key is held for 120 ms with 150 ms gaps.
-3. Reopen the authenticated stream and verify the selected screen.
-
-See [`PROBE_NOTES.md`](PROBE_NOTES.md) and [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) for the complete evidence and recovery procedures.
-
-## Credentials and configuration
-
-Credentials are intentionally not part of this repository. Store them in a password manager or inject them through a secure process environment. The local device API uses its own device credential; the GLKVM website account is separate. Never commit passwords, tokens, screenshots containing secrets, or shell history containing credentials.
-
-Typical read-only usage:
+### Install
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure --token "$KVMCTL_TOKEN" capabilities
-kvmctl --url https://<glkvm-host> --insecure --token "$KVMCTL_TOKEN" snapshot --out /tmp/glkvm.jpg
+python -m venv .venv
+.venv/bin/pip install .
 ```
 
-Mutating operations require explicit authorization and transport selection:
+For development, install the test dependencies too:
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure --token "$KVMCTL_TOKEN" \
-  --yes --transport kvm select pve1
+.venv/bin/pip install -e '.[dev]'
 ```
 
-For unattended or shared environments, prefer a CA bundle instead of `--insecure`.
+### Authenticate
+
+Keep credentials out of shell history and source control. Pass a short-lived token through the environment:
+
+```sh
+export KVMCTL_TOKEN='your-device-token'
+```
+
+Use a trusted CA bundle where possible. `--insecure` is available for devices using self-signed certificates during local setup.
+
+### Inspect a device
+
+```sh
+kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" capabilities
+```
+
+The CLI prints one JSON document, making it easy to use from scripts and automation.
+
+### Capture the current screen
+
+```sh
+kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" \
+  snapshot --out /tmp/kvm-screen.jpg
+```
+
+### Verify a machine
+
+```sh
+kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" \
+  verify workstation
+```
+
+### Select a machine
+
+State-changing operations require two deliberate confirmations: `--yes` and an explicit transport.
+
+```sh
+kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" \
+  --yes --transport kvm select workstation
+```
+
+If you omit either safety gate, `kvmctl` refuses to perform the operation.
+
+## See it in action
+
+This redacted capture shows the kind of console view that can be reached and verified through a KVM connection:
+
+![KVM-controlled console screenshot](docs/assets/kvmctl-working-public.jpg)
+
+The published image uses placeholder host details. Real device addresses and machine names belong in your local configuration, not in documentation or issue reports.
+
+## Configuration notes
+
+- Device credentials and tokens are never stored in this repository.
+- Read-only commands do not require `--yes`.
+- Write operations are denied unless explicitly authorized.
+- Machine selection requires an explicit transport so an accidental default cannot switch interfaces.
+- Verification is designed to confirm the resulting screen rather than assuming that a key sequence succeeded.
+- Machine profiles support configurable port limits, so additional switch layouts can be added without changing the client interface.
+
+For device-specific setup and recovery procedures, see the [operator runbook](docs/OPERATOR_RUNBOOK.md). The runbook is intentionally separate from this user-facing introduction.
+
+## Optional live smoke test
+
+The live test is read-only: it discovers capabilities and requests one snapshot. It does not select ports, send HID events, or change OTG state.
+
+```sh
+KVMCTL_LIVE_URL=https://kvm.example.test \
+KVMCTL_LIVE_TOKEN="$KVMCTL_TOKEN" \
+PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_live_hardware.py
+```
 
 ## Development
 
 ```sh
-python -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-PYTHONPATH=. .venv/bin/pytest -q
+.venv/bin/python -m pytest tests -q
 ```
 
-The test suite uses mocked transports for device interactions. Live hardware operations are intentionally not part of automated tests.
+Device interactions in the regular test suite use mocked transports. Live hardware tests are opt-in and skipped unless their environment variables are configured.
 
-### Optional live hardware smoke test
+## License
 
-The read-only smoke test requires explicit environment variables and performs only
-capability discovery and one snapshot; it never selects ports, sends HID events, or
-changes OTG state:
-
-```sh
-KVMCTL_LIVE_URL=https://glkvm.local \
-KVMCTL_LIVE_TOKEN="$KVMCTL_TOKEN" \
-KVMCTL_LIVE_INSECURE=1 \
-PYTHONPATH=. .venv/bin/pytest -q tests/test_live_hardware.py
-```
-
-## Safety boundaries
-
-The semantic surface does not provide arbitrary API passthrough. Power, reboot, firmware, factory-reset, and arbitrary console operations are outside the safe selection workflow. Review the runbook before operating real hardware.
-
-## Status
-
-Experimental, hardware-tested tooling. The core behavior is currently tailored to the verified GLKVM Comet and TH41-3 setup, while the client and switch abstractions are designed for extension to other KVMD-compatible hardware.
+See the repository license file for project licensing information.
