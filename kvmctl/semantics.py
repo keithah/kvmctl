@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from kvmctl.client import KvmClient
 from kvmctl.machines import (
@@ -47,7 +47,7 @@ class SemanticSurface:
         *,
         write_enabled: bool = False,
         ssh_allowlist: tuple[str, ...] = (),
-        ssh_runner: Optional[Callable[[str], dict]] = None,
+        ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
     ):
         self.client = client
         self.session = session or SessionState()

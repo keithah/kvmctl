@@ -84,7 +84,7 @@ Do not use the manual's factory-reset sequence. The manual's `[R]` switch-side r
 
 ## Verification record
 
-- Full repository suite: 83 tests passed (`PYTHONPATH=. .venv/bin/pytest -q`).
+- Full repository suite: 96 passed, 3 skipped (`.venv/bin/python -m pytest tests -q`).
 - Existing visual evidence confirms pve2: `evidence/glk_where_now.jpg` shows `pve2 login:` and `https://192.168.42.4:8006/`.
 - Fresh live verification (2026-08-26): authenticated with the known working admin credential, held `/api/ws?stream=1`, re-armed the TH41-3 via the documented OTG bounce, selected port 1 using held Right Ctrl ×2 → Digit1 → Enter, and captured `evidence/pve1-20260826-live.jpg`. Local Tesseract read `https://192.168.42.3:8006/` and `pve1 login:`.
 - Existing probe record documents the port 1/2/3/4 mapping and held-key/OTG-rearm recipe: `PROBE_NOTES.md`.
