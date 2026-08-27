@@ -28,9 +28,9 @@ Date: 2026-08-25
 - Port 3: Kodi build box M1 Mac
 - Port 4: pve3
 
-## Important unresolved behavior
+## Historical failed attempts (before physical checks)
 
-A reselect of port 2 returned 200 for `ControlRight`, `ControlRight`, `Digit2`, `Enter`, but a subsequent port-3 attempt with 120ms inter-key delays still showed pve2. This does **not** prove the sequence is wrong: likely remaining variables are switch timing, key-hold duration, or the exact TH41-3 hotkey mode. Do not claim port switching is complete until a port-3 transition is visually confirmed.
+Before the physical Hot key and keyboard-port checks were corrected, a reselect of port 2 returned 200 for `ControlRight`, `ControlRight`, `Digit2`, `Enter`, but a subsequent port-3 attempt still showed pve2. That negative result was superseded by the repeatable recipe documented below after the switch was power-cycled and the physical setup was corrected.
 
 The test harness must keep the `stream=1` WebSocket open across the entire select/snapshot/verify cycle.
 
