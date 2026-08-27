@@ -6,7 +6,7 @@ This runbook covers safe, non-destructive operation of the GLKVM Comet and the T
 
 | TH41-3 port | Target | Address / identity | Status |
 |---|---|---|---|
-| 1 | pve1 | `192.168.42.3:8006`, console prompt `pve1 login:` | Working; freshly verified selected target |
+| 1 | pve1 | `192.168.42.3:8006`, console prompt `pve1 login:` | Working; live-verified 2026-08-27 |
 | 2 | pve2 | `192.168.42.4:8006`, console prompt `pve2 login:` | Working; verified selected target |
 | 3 | Mac mini Kodi build box | M1 Mac | Mapped; switching has been visually verified |
 | 4 | pve3 | `192.168.42.5` | Mapped; switching has been visually verified |
@@ -84,7 +84,7 @@ Do not use the manual's factory-reset sequence. The manual's `[R]` switch-side r
 
 ## Verification record
 
-- Full repository suite: 96 passed, 3 skipped (`.venv/bin/python -m pytest tests -q`).
+- Full repository suite: 83 passed (`.venv/bin/python -m pytest tests -q`; latest local validation is recorded by CI).
 - Existing visual evidence confirms pve2: `evidence/glk_where_now.jpg` shows `pve2 login:` and `https://192.168.42.4:8006/`.
-- Fresh live verification (2026-08-26): authenticated with the known working admin credential, held `/api/ws?stream=1`, re-armed the TH41-3 via the documented OTG bounce, selected port 1 using held Right Ctrl ×2 → Digit1 → Enter, and captured `evidence/pve1-20260826-live.jpg`. Local Tesseract read `https://192.168.42.3:8006/` and `pve1 login:`.
+- Fresh live verification (2026-08-27, authenticated GLKVM stream): after the documented OTG re-arm, selected TH41-3 port 1 using held Right Ctrl ×2 → Digit1 → Enter and captured `evidence/pve1-live-current-after.jpg`. Visual review and OCR identity match confirm `https://192.168.42.3:8006/` and the `pve1 login:` prompt; sanitized details are in `evidence/pve1-live-current.json`.
 - Existing probe record documents the port 1/2/3/4 mapping and held-key/OTG-rearm recipe: `PROBE_NOTES.md`.
