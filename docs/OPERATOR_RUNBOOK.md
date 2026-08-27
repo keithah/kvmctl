@@ -84,7 +84,7 @@ Do not use the manual's factory-reset sequence. The manual's `[R]` switch-side r
 
 ## Verification record
 
-- Full repository suite: 83 passed (`.venv/bin/python -m pytest tests -q`; latest local validation is recorded by CI).
+- Full repository suite: 107 passed, 3 skipped (`.venv/bin/python -m pytest tests -q`, verified on merged main).
 - Existing visual evidence confirms pve2: `evidence/glk_where_now.jpg` shows `pve2 login:` and `https://192.168.42.4:8006/`.
 - Fresh live verification (2026-08-27, authenticated GLKVM stream): after the documented OTG re-arm, selected TH41-3 port 1 using held Right Ctrl ×2 → Digit1 → Enter and captured `evidence/pve1-live-current-after.jpg`. Visual review and OCR identity match confirm `https://192.168.42.3:8006/` and the `pve1 login:` prompt; sanitized details are in `evidence/pve1-live-current.json`.
 - Existing probe record documents the port 1/2/3/4 mapping and held-key/OTG-rearm recipe: `PROBE_NOTES.md`.
