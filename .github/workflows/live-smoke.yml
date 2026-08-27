@@ -11,7 +11,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m pip install -e '.[dev]'
+      - run: python -m pip install -e '.[dev,mcp]'
       - name: Read-only live hardware smoke test
         env:
           KVMCTL_LIVE_URL: ${{ secrets.KVMCTL_LIVE_URL }}
