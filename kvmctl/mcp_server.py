@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -35,6 +36,7 @@ def build_mcp_server(*, client=None, settings: Settings | None = None) -> FastMC
             "session": session,
             "write_enabled": settings.write_enabled,
             "ssh_allowlist": settings.ssh_allowlist,
+            "sleep": time.sleep,
         })
         return json.loads(raw)
 

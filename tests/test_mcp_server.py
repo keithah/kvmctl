@@ -2,6 +2,7 @@ import asyncio
 import base64
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from conftest import FakeKvmd
 from kvmctl.client import KvmClient
@@ -44,11 +45,15 @@ def test_client_from_env_uses_token_and_tls_settings(monkeypatch):
     assert settings.write_enabled is False
 
 
-def test_fastmcp_registers_shared_tools_and_snapshot_image():
+def test_fastmcp_registers_shared_tools():
     client, _ = make_client()
     server = build_mcp_server(client=client)
-    tools = server._tool_manager.list_tools()
-    names = {tool.name for tool in tools}
+    async def exercise():
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            return {tool.name for tool in tools.tools}
+    names = asyncio.run(exercise())
     assert names == {"capabilities", "snapshot", "ocr", "verify", "select",
                      "hid_reset", "rearm_otg", "exec_command"}
 
@@ -56,9 +61,12 @@ def test_fastmcp_registers_shared_tools_and_snapshot_image():
 def test_mcp_snapshot_returns_native_image_content():
     client, _ = make_client()
     server = build_mcp_server(client=client)
-    result = asyncio.run(server._tool_manager.call_tool("snapshot", {"preview_max_width": 640}))
-    # FastMCP's sync manager returns a coroutine-free result for sync tools.
-    content = result
+    async def exercise():
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            result = await session.call_tool("snapshot", {"preview_max_width": 640})
+            return result.content[0]
+    content = asyncio.run(exercise())
     assert getattr(content, "type", None) == "image"
     assert base64.b64decode(content.data) == b"\xff\xd8fake-jpeg"
     assert content.mimeType == "image/jpeg"
@@ -67,6 +75,11 @@ def test_mcp_snapshot_returns_native_image_content():
 def test_mcp_write_tool_defaults_to_refused():
     client, _ = make_client()
     server = build_mcp_server(client=client)
-    result = asyncio.run(server._tool_manager.call_tool("hid_reset", {}))
+    async def exercise():
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            return await session.call_tool("hid_reset", {})
+    result = asyncio.run(exercise())
+    result = result.structuredContent
     assert result["ok"] is False
     assert "policy" in result["error"].lower()

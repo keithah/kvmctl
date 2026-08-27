@@ -20,7 +20,7 @@ class Settings:
 
 
 def settings_from_env(environ: dict[str, str] | None = None) -> Settings:
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     url = env.get("KVMCTL_URL", "").strip()
     if not url:
         raise ValueError("KVMCTL_URL is required")
