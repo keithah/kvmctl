@@ -7,9 +7,11 @@ dependencies = ["httpx>=0.24", "Pillow>=10"]
 
 [project.scripts]
 kvmctl = "kvmctl.cli:main"
+kvmctl-mcp = "kvmctl.mcp_server:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+mcp = ["mcp>=1.0,<2"]
 
 [build-system]
 requires = ["hatchling"]
