@@ -34,7 +34,7 @@ def settings_from_env(environ: dict[str, str] | None = None) -> Settings:
         password=env.get("KVMCTL_PASSWORD") or None,
         verify=verify,
         host=env.get("KVMCTL_HOST") or None,
-        write_enabled=_truthy(env.get("KVMCTL_WRITE_ENABLED")),
+        write_enabled=env.get("KVMCTL_WRITE_ENABLED", "").strip() == "1",
         ssh_allowlist=allowlist,
     )
 

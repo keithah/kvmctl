@@ -45,6 +45,15 @@ def test_client_from_env_uses_token_and_tls_settings(monkeypatch):
     assert settings.write_enabled is False
 
 
+@pytest.mark.parametrize("value", ["true", "yes", "on", " 1 ", "2"])
+def test_write_gate_requires_exact_one(value, monkeypatch):
+    monkeypatch.setenv("KVMCTL_URL", "https://kvm.test")
+    monkeypatch.setenv("KVMCTL_TOKEN", "secret-token")
+    monkeypatch.setenv("KVMCTL_WRITE_ENABLED", value)
+    _, settings = client_from_env(return_settings=True)
+    assert settings.write_enabled is (value.strip() == "1")
+
+
 def test_fastmcp_registers_shared_tools():
     client, _ = make_client()
     server = build_mcp_server(client=client)
