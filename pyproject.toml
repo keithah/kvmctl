@@ -2,14 +2,16 @@
 name = "kvmctl"
 version = "0.1.0"
 description = "KVMD-compatible (PiKVM/GLKVM) client core"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["httpx>=0.24", "Pillow>=10"]
 
 [project.scripts]
 kvmctl = "kvmctl.cli:main"
+kvmctl-mcp = "kvmctl.mcp_server:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+mcp = ["mcp>=1.0,<2"]
 
 [build-system]
 requires = ["hatchling"]

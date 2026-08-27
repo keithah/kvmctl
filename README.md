@@ -103,6 +103,16 @@ KVMCTL_LIVE_TOKEN="$KVMCTL_TOKEN" \
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_live_hardware.py
 ```
 
+### MCP integration
+
+Install the optional MCP adapter with `.venv/bin/pip install -e '.[mcp]'`, then
+configure an MCP client to launch `kvmctl-mcp`. It uses `KVMCTL_URL` and
+`KVMCTL_TOKEN` (or the optional login variables), is read-only by default, and
+returns snapshots as native MCP image content. Writes require the explicit
+`KVMCTL_WRITE_ENABLED=1` environment gate plus each operation's transport and
+policy requirements. See [`docs/MCP.md`](docs/MCP.md) for the complete tool and
+environment reference.
+
 ## Development
 
 ```sh

@@ -99,3 +99,13 @@ def test_mcp_dispatch_exec_requires_ssh_transport():
     out = json.loads(dispatch_tool("exec_command", {"command": "uptime"},
                                    context=ctx))
     assert out["ok"] is False  # no transport given
+
+
+def test_mcp_dispatch_select_requires_kvm_transport():
+    c, _ = make_client()
+    out = json.loads(dispatch_tool(
+        "select", {"machine": "pve2", "transport": "ssh"},
+        context={"client": c, "write_enabled": True, "test_mode": True},
+    ))
+    assert out["ok"] is False
+    assert "transport='kvm'" in out["error"]

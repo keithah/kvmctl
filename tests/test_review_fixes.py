@@ -54,7 +54,7 @@ def test_held_key_rejects_dangling_release():
 
 def test_mcp_select_without_sleep_is_refused():
     c, _ = make_client()
-    out = json.loads(dispatch_tool("select", {"machine": "pve2"}, context={"client": c}))
+    out = json.loads(dispatch_tool("select", {"machine": "pve2", "transport": "kvm"}, context={"client": c}))
     assert out["ok"] is False
     assert "sleep" in out["error"]
 
@@ -65,7 +65,7 @@ def test_mcp_select_with_test_mode_allows_no_sleep():
     ctx = {"client": c, "test_mode": True, "write_enabled": True}
     # rearm disabled so no otg route needed; verify none via policy
     out = json.loads(dispatch_tool(
-        "select", {"machine": "pve2", "rearm": False,
+        "select", {"machine": "pve2", "transport": "kvm", "rearm": False,
                    "verify_policy": "none", "settle_s": 0},
         context=ctx))
     events = [(r["params"].get("key"), r["params"].get("state"))

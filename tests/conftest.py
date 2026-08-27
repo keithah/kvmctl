@@ -12,8 +12,8 @@ class FakeKvmd:
         self.routes = {}    # (method, path) -> callable(request_dict) -> (status, body)
         self.token = None   # when set, require this token header
 
-    def add(self, method, path, fn=None, status=200, body=None):
-        self.routes[(method.upper(), path)] = fn or (lambda req: (status, body if body is not None else {"ok": True}))
+    def add(self, method, path, fn=None, status=200, body=None, content=None):
+        self.routes[(method.upper(), path)] = fn or (lambda req: (status, content if content is not None else body if body is not None else {"ok": True}))
 
     def handle(self, request: "httpx.Request"):
         req = {
@@ -30,6 +30,8 @@ class FakeKvmd:
         key = (req["method"], req["path"])
         if key in self.routes:
             status, body = self.routes[key](req)
+            if isinstance(body, (bytes, bytearray)):
+                return httpx.Response(status, content=bytes(body), headers={"content-type": "image/jpeg"})
             return httpx.Response(status, json=body)
         return httpx.Response(404, json={"ok": False, "error": "not found"})
 
