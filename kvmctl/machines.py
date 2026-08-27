@@ -44,6 +44,7 @@ class MachineProfile:
 
     port: int
     name: str
+    port_limit: int = 4
     description: str = ""
     enabled: bool = True
     # Substrings expected in OCR text of this machine's console/desktop.
@@ -54,8 +55,8 @@ class MachineProfile:
     prompt_patterns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not (1 <= self.port <= 4):
-            raise ValueError(f"port {self.port} out of range 1-4")
+        if self.port_limit < 1 or not (1 <= self.port <= self.port_limit):
+            raise ValueError(f"port {self.port} out of range 1-{self.port_limit}")
 
     def ocr_matches(self, text: str) -> bool:
         t = text.lower()

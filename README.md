@@ -8,6 +8,9 @@ This project provides:
 - A verified Terived TH41-3 HDMI-switch driver using the switch's required held-key timing and USB re-arm sequence.
 - Named machine profiles with explicit selection state and screen verification.
 - A CLI and semantic MCP surface with read/write policy gates and machine-readable evidence.
+- Extensible machine profiles with configurable port limits; the included rack is the
+  verified four-port setup, while other switch profiles can be added without changing
+  the client or semantic surface.
 
 ## Hardware verified
 
@@ -52,6 +55,19 @@ PYTHONPATH=. .venv/bin/pytest -q
 ```
 
 The test suite uses mocked transports for device interactions. Live hardware operations are intentionally not part of automated tests.
+
+### Optional live hardware smoke test
+
+The read-only smoke test requires explicit environment variables and performs only
+capability discovery and one snapshot; it never selects ports, sends HID events, or
+changes OTG state:
+
+```sh
+KVMCTL_LIVE_URL=https://glkvm.local \
+KVMCTL_LIVE_TOKEN="$KVMCTL_TOKEN" \
+KVMCTL_LIVE_INSECURE=1 \
+PYTHONPATH=. .venv/bin/pytest -q tests/test_live_hardware.py
+```
 
 ## Safety boundaries
 

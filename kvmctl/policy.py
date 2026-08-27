@@ -11,7 +11,7 @@ Rules:
 from __future__ import annotations
 
 import shlex
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 
 class PolicyError(RuntimeError):
@@ -29,7 +29,7 @@ WRITE_OPERATIONS = frozenset({
 })
 
 
-def validate_command(command: str, allowlist: tuple[str, ...]) -> str:
+def parse_allowlisted_command(command: str, allowlist: tuple[str, ...]) -> tuple[list[str], str]:
     """Return the allowlisted base command, or raise PolicyError.
 
     Matching is on the first shell word (argv[0]) so ``uptime -p`` matches
@@ -51,7 +51,12 @@ def validate_command(command: str, allowlist: tuple[str, ...]) -> str:
         raise PolicyError(
             f"command {base!r} not in SSH allowlist {sorted(allowlist)}"
         )
-    return base
+    return words, base
+
+
+def validate_command(command: str, allowlist: tuple[str, ...]) -> str:
+    """Return the allowlisted base command, preserving the public API."""
+    return parse_allowlisted_command(command, allowlist)[1]
 
 
 class TransportPolicy:
@@ -62,7 +67,7 @@ class TransportPolicy:
         *,
         write_enabled: bool = False,
         ssh_allowlist: tuple[str, ...] = (),
-        ssh_runner: Optional[Callable[[str], dict]] = None,
+        ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
     ):
         self.write_enabled = write_enabled
         self.ssh_allowlist = tuple(ssh_allowlist)
@@ -80,7 +85,9 @@ class TransportPolicy:
     def run_ssh(self, command: str) -> dict:
         if self.ssh_runner is None:
             raise PolicyError("no SSH runner configured")
-        base = validate_command(command, self.ssh_allowlist)
-        result = self.ssh_runner(command)
+        words, base = parse_allowlisted_command(command, self.ssh_allowlist)
+        # The runner receives argv, not a shell string. Implementations should
+        # invoke SSH/subprocess with shell=False (or equivalent).
+        result = self.ssh_runner(words)
         return {"rc": result.get("rc"), "stdout": result.get("stdout", ""),
                 "stderr": result.get("stderr", ""), "command_base": base}

@@ -14,6 +14,7 @@ from kvmctl.machines import (
     SwitchFailure,
     VerifyPolicy,
     frames_differ,
+    MachineProfile,
     run_verify_policy,
     select_machine,
     verify_frame_change,
@@ -270,6 +271,11 @@ def test_snapshot_errors_during_verify_do_not_crash(monkeypatch):
 def test_default_policies_cover_all_machines():
     assert set(DEFAULT_VERIFY_POLICY) == set(RACK)
     assert DEFAULT_VERIFY_POLICY["kodi-build"] is VerifyPolicy.FRAME_CHANGE
+
+
+def test_machine_profile_supports_switches_larger_than_verified_four_port_rack():
+    profile = MachineProfile(port=8, name="lab-node-8", port_limit=8)
+    assert profile.port == 8
 
 
 def test_select_does_not_mutate_options_default_policy():

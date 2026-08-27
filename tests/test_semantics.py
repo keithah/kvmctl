@@ -88,7 +88,7 @@ def test_exec_command_gated_allowlist():
     out = surf.exec_command("uptime", transport="ssh")
     assert out["ok"] is True
     assert out["evidence"]["rc"] == 0
-    assert calls == ["uptime"]
+    assert calls == [["uptime"]]
 
 
 @pytest.mark.parametrize("command", [
