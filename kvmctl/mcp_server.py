@@ -91,6 +91,54 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
     def rearm_otg(transport: str = "") -> dict[str, Any]:
         return call("rearm_otg", {"transport": transport})
 
+    @server.tool(name="kvm_send_text", description="Type text through the selected KVM target; requires write authorization.")
+    def kvm_send_text(text: str, interval_s: float = 0.01) -> dict[str, Any]:
+        return call("kvm_send_text", {"text": text, "interval_s": interval_s})
+
+    @server.tool(name="kvm_send_keys", description="Send a validated key chord; requires write authorization.")
+    def kvm_send_keys(combo: str) -> dict[str, Any]:
+        return call("kvm_send_keys", {"combo": combo})
+
+    @server.tool(name="kvm_hold_key", description="Hold a key for a bounded duration; requires write authorization.")
+    def kvm_hold_key(key: str, duration_ms: int) -> dict[str, Any]:
+        return call("kvm_hold_key", {"key": key, "duration_ms": duration_ms})
+
+    @server.tool(name="kvm_release_all", description="Release all keys tracked as held; requires write authorization.")
+    def kvm_release_all() -> dict[str, Any]:
+        return call("kvm_release_all", {})
+
+    @server.tool(name="kvm_mouse_move", description="Move the selected target mouse in normalized coordinates; requires write authorization.")
+    def kvm_mouse_move(x: int, y: int) -> dict[str, Any]:
+        return call("kvm_mouse_move", {"x": x, "y": y})
+
+    @server.tool(name="kvm_mouse_move_pct", description="Move the selected target mouse by screen percentage; requires write authorization.")
+    def kvm_mouse_move_pct(x_pct: float, y_pct: float) -> dict[str, Any]:
+        return call("kvm_mouse_move_pct", {"x_pct": x_pct, "y_pct": y_pct})
+
+    @server.tool(name="kvm_mouse_click", description="Click the selected target mouse; requires write authorization.")
+    def kvm_mouse_click(button: str = "left", count: int = 1) -> dict[str, Any]:
+        return call("kvm_mouse_click", {"button": button, "count": count})
+
+    @server.tool(name="kvm_mouse_scroll", description="Scroll the selected target mouse wheel; requires write authorization.")
+    def kvm_mouse_scroll(dx: int = 0, dy: int = 0) -> dict[str, Any]:
+        return call("kvm_mouse_scroll", {"dx": dx, "dy": dy})
+
+    @server.tool(name="kvm_status", description="Report KVM authentication, stream, and held-key state.")
+    def kvm_status() -> dict[str, Any]:
+        return call("kvm_status", {})
+
+    @server.tool(name="kvm_screenshot_to_file", description="Save a current JPEG screenshot to a file.")
+    def kvm_screenshot_to_file(path: str, max_width: int = 1280) -> dict[str, Any]:
+        return call("kvm_screenshot_to_file", {"path": path, "max_width": max_width})
+
+    @server.tool(name="kvm_ocr_screenshot", description="OCR the current screenshot and return text with coordinates.")
+    def kvm_ocr_screenshot(search_text: str = "") -> dict[str, Any]:
+        return call("kvm_ocr_screenshot", {"search_text": search_text})
+
+    @server.tool(name="kvm_ocr_click", description="Find text with OCR and click its best match; requires write authorization.")
+    def kvm_ocr_click(text: str, button: str = "left", count: int = 1) -> dict[str, Any]:
+        return call("kvm_ocr_click", {"text": text, "button": button, "count": count})
+
     @server.tool(name="exec_command", description="Run an allowlisted SSH command; requires explicit SSH transport.")
     def exec_command(command: str, transport: str = "") -> dict[str, Any]:
         return call("exec_command", {"command": command, "transport": transport})

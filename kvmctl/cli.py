@@ -65,6 +65,34 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("hid-reset")
     sub.add_parser("rearm-otg")
 
+    kt = sub.add_parser("send-text", help="type text through the selected target")
+    kt.add_argument("text")
+    kt.add_argument("--interval", type=float, default=0.01)
+    kk = sub.add_parser("send-keys", help="send a key chord through the selected target")
+    kk.add_argument("combo")
+    hk = sub.add_parser("hold-key", help="hold one key, then release it")
+    hk.add_argument("key")
+    hk.add_argument("duration_ms", type=int)
+    sub.add_parser("release-all")
+    mm = sub.add_parser("mouse-move")
+    mm.add_argument("x", type=int)
+    mm.add_argument("y", type=int)
+    mp = sub.add_parser("mouse-move-pct")
+    mp.add_argument("x_pct", type=float)
+    mp.add_argument("y_pct", type=float)
+    mc = sub.add_parser("mouse-click")
+    mc.add_argument("--button", default="left")
+    mc.add_argument("--count", type=int, default=1)
+    ms = sub.add_parser("mouse-scroll")
+    ms.add_argument("--dx", type=int, default=0)
+    ms.add_argument("--dy", type=int, default=0)
+    osr = sub.add_parser("ocr-screenshot")
+    osr.add_argument("--search-text", default="")
+    oc = sub.add_parser("ocr-click")
+    oc.add_argument("text")
+    oc.add_argument("--button", default="left")
+    oc.add_argument("--count", type=int, default=1)
+
     ex = sub.add_parser("exec-command")
     ex.add_argument("cmd")
     return p
@@ -147,6 +175,35 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         elif args.command == "rearm-otg":
             need_write()
             out = surf.rearm_otg()
+        elif args.command == "send-text":
+            need_write()
+            out = surf.kvm_send_text(args.text, sleep=sleep, interval_s=args.interval)
+        elif args.command == "send-keys":
+            need_write()
+            out = surf.kvm_send_keys(args.combo)
+        elif args.command == "hold-key":
+            need_write()
+            out = surf.kvm_hold_key(args.key, args.duration_ms, sleep=sleep)
+        elif args.command == "release-all":
+            need_write()
+            out = surf.kvm_release_all()
+        elif args.command == "mouse-move":
+            need_write()
+            out = surf.kvm_mouse_move(args.x, args.y)
+        elif args.command == "mouse-move-pct":
+            need_write()
+            out = surf.kvm_mouse_move_pct(args.x_pct, args.y_pct)
+        elif args.command == "mouse-click":
+            need_write()
+            out = surf.kvm_mouse_click(args.button, args.count, sleep=sleep)
+        elif args.command == "mouse-scroll":
+            need_write()
+            out = surf.kvm_mouse_scroll(args.dx, args.dy)
+        elif args.command == "ocr-screenshot":
+            out = surf.kvm_ocr_screenshot(args.search_text)
+        elif args.command == "ocr-click":
+            need_write()
+            out = surf.kvm_ocr_click(args.text, args.button, args.count, sleep=sleep)
         elif args.command == "exec-command":
             need_write()
             need_transport("exec-command")

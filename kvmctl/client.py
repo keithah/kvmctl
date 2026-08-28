@@ -44,6 +44,7 @@ class KvmClient:
         self._timeout = timeout
         self.host = host
         self._stream = None
+        self._held_keys: set[str] = set()
 
     # -- plumbing ---------------------------------------------------------
 
@@ -158,11 +159,59 @@ class KvmClient:
         self._send_key_event(key, "down")
 
     def key_up(self, key: str) -> None:
-        self._send_key_event(key, "up")
+        try:
+            self._send_key_event(key, "up")
+        finally:
+            self._held_keys.discard(key)
 
     def press_key(self, key: str) -> None:
         self.key_down(key)
         self.key_up(key)
+
+    def send_keys(self, keys: str | list[str]) -> None:
+        """Send a KVMD shortcut using canonical browser-style key names."""
+        if isinstance(keys, list):
+            keys = ",".join(keys)
+        if not keys or any(not part.strip() for part in keys.split(",")):
+            raise ValueError("shortcut must contain one or more key names")
+        self._request("POST", "/api/hid/events/send_shortcut",
+                      params={"keys": keys})
+
+    def release_all(self) -> list[str]:
+        """Release keys held through this client and return their names."""
+        released = []
+        for key in list(self._held_keys):
+            self.key_up(key)
+            released.append(key)
+        return released
+
+    def mouse_move(self, x: int, y: int) -> None:
+        """Move to normalized absolute coordinates in the KVMD int16 range."""
+        if not (-32768 <= x <= 32767 and -32768 <= y <= 32767):
+            raise ValueError("mouse coordinates must be in -32768..32767")
+        self._request("POST", "/api/hid/events/send_mouse_move",
+                      params={"to_x": x, "to_y": y})
+
+    def mouse_move_pct(self, x_pct: float, y_pct: float) -> tuple[int, int]:
+        """Move to a screen percentage and return normalized coordinates."""
+        if not (0 <= x_pct <= 100 and 0 <= y_pct <= 100):
+            raise ValueError("mouse percentages must be in 0..100")
+        x = round(x_pct / 100 * 65535 - 32768)
+        y = round(y_pct / 100 * 65535 - 32768)
+        self.mouse_move(x, y)
+        return x, y
+
+    def mouse_button(self, button: str, state: bool) -> None:
+        if button not in {"left", "middle", "right", "up", "down"}:
+            raise ValueError(f"unsupported mouse button: {button}")
+        self._request("POST", "/api/hid/events/send_mouse_button",
+                      params={"button": button, "state": "true" if state else "false"})
+
+    def mouse_scroll(self, dx: int = 0, dy: int = 0) -> None:
+        if not (-127 <= dx <= 127 and -127 <= dy <= 127):
+            raise ValueError("mouse wheel deltas must be in -127..127")
+        self._request("POST", "/api/hid/events/send_mouse_wheel",
+                      params={"delta_x": dx, "delta_y": dy})
 
     def _send_key_event(self, key: str, state: str) -> None:
         self._request(
@@ -170,6 +219,8 @@ class KvmClient:
             "/api/hid/events/send_key",
             params={"key": key, "state": "true" if state == "down" else "false"},
         )
+        if state == "down":
+            self._held_keys.add(key)
 
     def type_text(self, text: str) -> None:
         from .keys import char_to_key  # lazy import keeps module surface small

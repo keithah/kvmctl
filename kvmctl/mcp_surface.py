@@ -112,6 +112,35 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                               "test_mode=true."),
                 })
             out = surf.rearm_otg(sleep=sleep or _no_sleep)
+        elif name == "kvm_send_text":
+            out = surf.kvm_send_text(arguments["text"], sleep=sleep or _no_sleep,
+                                     interval_s=float(arguments.get("interval_s", 0.01)))
+        elif name == "kvm_send_keys":
+            out = surf.kvm_send_keys(arguments["combo"])
+        elif name == "kvm_hold_key":
+            out = surf.kvm_hold_key(arguments["key"], int(arguments["duration_ms"]),
+                                    sleep=sleep or _no_sleep)
+        elif name == "kvm_release_all":
+            out = surf.kvm_release_all()
+        elif name == "kvm_mouse_move":
+            out = surf.kvm_mouse_move(int(arguments["x"]), int(arguments["y"]))
+        elif name == "kvm_mouse_move_pct":
+            out = surf.kvm_mouse_move_pct(float(arguments["x_pct"]), float(arguments["y_pct"]))
+        elif name == "kvm_mouse_click":
+            out = surf.kvm_mouse_click(str(arguments.get("button", "left")),
+                                       int(arguments.get("count", 1)), sleep=sleep or _no_sleep)
+        elif name == "kvm_mouse_scroll":
+            out = surf.kvm_mouse_scroll(int(arguments.get("dx", 0)), int(arguments.get("dy", 0)))
+        elif name == "kvm_status":
+            out = surf.kvm_status()
+        elif name == "kvm_screenshot_to_file":
+            out = surf.kvm_screenshot_to_file(arguments["path"],
+                                               preview_max_width=int(arguments.get("max_width", 1280)))
+        elif name == "kvm_ocr_screenshot":
+            out = surf.kvm_ocr_screenshot(str(arguments.get("search_text", "")))
+        elif name == "kvm_ocr_click":
+            out = surf.kvm_ocr_click(arguments["text"], str(arguments.get("button", "left")),
+                                     int(arguments.get("count", 1)), sleep=sleep or _no_sleep)
         elif name == "exec_command":
             out = surf.exec_command(arguments["command"],
                                     transport=str(arguments.get("transport", "")))

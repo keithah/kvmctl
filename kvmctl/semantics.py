@@ -205,6 +205,116 @@ class SemanticSurface:
         return self.host.reboot(target, confirmation, write_enabled=True,
                                 attempts=attempts, delay=delay, sleep=sleep)
 
+    def kvm_send_text(self, text: str, *, sleep: Callable[[float], None] = time.sleep,
+                      interval_s: float = 0.01) -> dict:
+        self.policy.require_write("kvm_send_text")
+        from kvmctl.input import send_text
+        if not (0 <= interval_s <= 10):
+            raise PolicyError("interval_s must be between 0 and 10 seconds")
+        result = send_text(self.client, text, sleep=sleep, inter_char_s=interval_s)
+        return _evidence("kvm_send_text", "kvm", read_only=False, **result)
+
+    def kvm_send_keys(self, combo: str) -> dict:
+        self.policy.require_write("kvm_send_keys")
+        from kvmctl.input import parse_combo
+        modifiers, key = parse_combo(combo)
+        for modifier in modifiers:
+            self.client.key_down(modifier)
+        try:
+            self.client.press_key(key)
+        finally:
+            for modifier in reversed(modifiers):
+                self.client.key_up(modifier)
+        return _evidence("kvm_send_keys", "kvm", read_only=False,
+                         combo=combo, modifiers=modifiers, key=key)
+
+    def kvm_hold_key(self, key: str, duration_ms: int, *,
+                     sleep: Callable[[float], None] = time.sleep) -> dict:
+        self.policy.require_write("kvm_hold_key")
+        from kvmctl.input import resolve_key
+        if not (1 <= duration_ms <= 5000):
+            raise PolicyError("duration_ms must be between 1 and 5000")
+        canonical = resolve_key(key)
+        self.client.key_down(canonical)
+        try:
+            sleep(duration_ms / 1000)
+        finally:
+            self.client.key_up(canonical)
+        return _evidence("kvm_hold_key", "kvm", read_only=False,
+                         key=canonical, duration_ms=duration_ms)
+
+    def kvm_release_all(self) -> dict:
+        self.policy.require_write("kvm_release_all")
+        return _evidence("kvm_release_all", "kvm", read_only=False,
+                         released=self.client.release_all())
+
+    def kvm_mouse_move(self, x: int, y: int) -> dict:
+        self.policy.require_write("kvm_mouse_move")
+        self.client.mouse_move(x, y)
+        return _evidence("kvm_mouse_move", "kvm", read_only=False, x=x, y=y)
+
+    def kvm_mouse_move_pct(self, x_pct: float, y_pct: float) -> dict:
+        self.policy.require_write("kvm_mouse_move_pct")
+        x, y = self.client.mouse_move_pct(x_pct, y_pct)
+        return _evidence("kvm_mouse_move_pct", "kvm", read_only=False,
+                         x=x, y=y, x_pct=x_pct, y_pct=y_pct)
+
+    def kvm_mouse_click(self, button: str = "left", count: int = 1,
+                        *, sleep: Callable[[float], None] = time.sleep) -> dict:
+        self.policy.require_write("kvm_mouse_click")
+        if not (1 <= count <= 5):
+            raise PolicyError("count must be between 1 and 5")
+        for _ in range(count):
+            self.client.mouse_button(button, True)
+            try:
+                sleep(0.025)
+            finally:
+                self.client.mouse_button(button, False)
+            sleep(0.03)
+        return _evidence("kvm_mouse_click", "kvm", read_only=False,
+                         button=button, count=count)
+
+    def kvm_mouse_scroll(self, dx: int = 0, dy: int = 0) -> dict:
+        self.policy.require_write("kvm_mouse_scroll")
+        self.client.mouse_scroll(dx, dy)
+        return _evidence("kvm_mouse_scroll", "kvm", read_only=False, dx=dx, dy=dy)
+
+    def kvm_status(self) -> dict:
+        return _evidence("kvm_status", "kvm", read_only=True,
+                         authenticated=bool(self.client.token),
+                         held_keys=sorted(self.client._held_keys),
+                         stream_open=self.client._stream is not None)
+
+    def kvm_screenshot_to_file(self, path: str, *, preview_max_width: int = 1280) -> dict:
+        data = self.client.snapshot_jpeg(preview_max_width=preview_max_width)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return _evidence("kvm_screenshot_to_file", "kvm", read_only=True,
+                         path=path, bytes=len(data))
+
+    def kvm_ocr_screenshot(self, search_text: str = "") -> dict:
+        from kvmctl.ocr import analyze
+        data = self.client.snapshot_jpeg()
+        result = analyze(data, search_text)
+        return _evidence("kvm_ocr_screenshot", "kvm", read_only=True, **result)
+
+    def kvm_ocr_click(self, text: str, button: str = "left", count: int = 1,
+                      *, sleep: Callable[[float], None] = time.sleep) -> dict:
+        self.policy.require_write("kvm_ocr_click")
+        from kvmctl.ocr import analyze
+        result = analyze(self.client.snapshot_jpeg(), text)
+        if not result["elements"]:
+            return _evidence("kvm_ocr_click", "kvm", read_only=False,
+                             ok=False, found=False, text=text)
+        best = result["elements"][0]
+        self.kvm_mouse_move_pct(best["x_pct"], best["y_pct"])
+        self.kvm_mouse_click(button, count, sleep=sleep)
+        return _evidence("kvm_ocr_click", "kvm", read_only=False,
+                         found=True, text=best["text"],
+                         confidence=best["confidence"], pixel=best["pixel"],
+                         x_pct=best["x_pct"], y_pct=best["y_pct"], count=count,
+                         button=button)
+
     def exec_command(self, command: str, *, transport: str = "") -> dict:
         self.policy.require_write("exec_command")
         if transport != "ssh":

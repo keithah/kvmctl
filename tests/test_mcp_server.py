@@ -66,7 +66,11 @@ def test_fastmcp_registers_shared_tools():
     assert names == {"capabilities", "snapshot", "ocr", "verify",
                      "host.identity.inspect", "host.graphics.inspect",
                      "service.render_access.inspect", "host.reboot", "select",
-                     "hid_reset", "rearm_otg", "exec_command"}
+                     "hid_reset", "rearm_otg", "exec_command",
+                     "kvm_send_text", "kvm_send_keys", "kvm_hold_key",
+                     "kvm_release_all", "kvm_mouse_move", "kvm_mouse_move_pct",
+                     "kvm_mouse_click", "kvm_mouse_scroll", "kvm_status",
+                     "kvm_screenshot_to_file", "kvm_ocr_screenshot", "kvm_ocr_click"}
 
 
 def test_mcp_snapshot_returns_native_image_content():

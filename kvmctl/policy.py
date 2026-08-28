@@ -26,6 +26,9 @@ READ_ONLY_OPERATIONS = frozenset({
 
 WRITE_OPERATIONS = frozenset({
     "select", "hid_reset", "exec_command", "rearm_otg", "host.reboot",
+    "kvm_send_text", "kvm_send_keys", "kvm_hold_key", "kvm_release_all",
+    "kvm_mouse_move", "kvm_mouse_move_pct", "kvm_mouse_click", "kvm_mouse_scroll",
+    "kvm_ocr_click",
 })
 
 

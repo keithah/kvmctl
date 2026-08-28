@@ -108,6 +108,17 @@ kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
 
 Host reboot is separately authorized and requires a target-bound confirmation token. Do not test it during KVM switching validation.
 
+## Keyboard pass-through status
+
+After a target is selected, the GLKVM HID connection can deliver keyboard events to that target. The low-level Python API and the guarded CLI/MCP controls are available:
+
+```python
+client.press_key("Enter")
+client.type_text("example")
+```
+
+The CLI now provides `send-text`, `send-keys`, `hold-key`, `release-all`, `mouse-move`, `mouse-move-pct`, `mouse-click`, `mouse-scroll`, `ocr-screenshot`, and `ocr-click`. All input actions require `--yes`; `ocr-screenshot` is read-only. `exec-command` runs an allowlisted SSH command on a host; it does not type the command through the attached keyboard.
+
 ## Safety boundaries
 
 - Do not issue power, shutdown, reboot, firmware, storage, factory-reset, or arbitrary-console commands during KVM verification.

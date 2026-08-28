@@ -80,7 +80,8 @@ def test_mcp_spec_declares_readonly_and_gates():
     for tool in TOOL_SPEC:
         if tool["name"] in ("capabilities", "snapshot", "ocr", "verify",
                              "host.identity.inspect", "host.graphics.inspect",
-                             "service.render_access.inspect"):
+                             "service.render_access.inspect", "kvm_status",
+                             "kvm_screenshot_to_file", "kvm_ocr_screenshot"):
             assert tool.get("read_only") is True
         else:
             assert tool.get("write_gate") is True
@@ -88,7 +89,11 @@ def test_mcp_spec_declares_readonly_and_gates():
     assert names == {"capabilities", "snapshot", "ocr", "verify",
                      "host.identity.inspect", "host.graphics.inspect",
                      "service.render_access.inspect", "host.reboot", "select",
-                     "hid_reset", "rearm_otg", "exec_command"}
+                     "hid_reset", "rearm_otg", "exec_command",
+                     "kvm_send_text", "kvm_send_keys", "kvm_hold_key",
+                     "kvm_release_all", "kvm_mouse_move", "kvm_mouse_move_pct",
+                     "kvm_mouse_click", "kvm_mouse_scroll", "kvm_status",
+                     "kvm_screenshot_to_file", "kvm_ocr_screenshot", "kvm_ocr_click"}
 
 
 def test_mcp_dispatch_enforces_policy():

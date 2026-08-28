@@ -12,6 +12,7 @@ Use `kvmctl` to inspect a device, capture its screen, verify a machine, and—wh
 - Capture a JPEG snapshot of the current screen
 - Verify a named machine from the captured screen
 - Select a named machine through a configured KVM switch
+- Send individual keyboard events or mapped text through the Python client
 - Reset HID or re-arm the USB/OTG connection when needed
 - Run explicitly allowlisted SSH commands through a configured integration
 - Consume the same semantic operations from the Python API or MCP surface
@@ -103,6 +104,19 @@ The command re-arms the USB/OTG gadget when needed, sends the profile's held-key
 The included four-port HID profile has been tested with a Right Ctrl ×2, port digit, Enter recipe; each key is sent sequentially and held briefly. See [`docs/TH41-3.md`](docs/TH41-3.md) for that tested profile and [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) for operational recovery.
 
 If you omit either safety gate, `kvmctl` refuses to perform the operation. Unknown or disabled machine names never generate HID traffic.
+
+## Keyboard input to the selected target
+
+The GLKVM HID path does pass keyboard input through to whichever target is currently selected. The Python client currently supports:
+
+```python
+client.press_key("Enter")
+client.type_text("root")
+```
+
+It also exposes lower-level `key_down()` and `key_up()` methods for a deliberately controlled key hold. Key names use browser-style KVMD names such as `KeyA`, `ControlRight`, `Digit2`, and `Enter`; `type_text()` maps supported printable ASCII characters and manages `ShiftLeft` for uppercase/shifted symbols.
+
+The CLI and MCP now expose the same guarded controls: `send-text`, `send-keys`, `hold-key`, `release-all`, `mouse-move`, `mouse-move-pct`, `mouse-click`, `mouse-scroll`, `ocr-screenshot`, and `ocr-click`. Input actions require `--yes` on the CLI or `KVMCTL_WRITE_ENABLED=1` for MCP. The CLI's `exec-command` operation remains a separate allowlisted SSH feature and does not type through the KVM.
 
 ## Recovery scenarios
 
