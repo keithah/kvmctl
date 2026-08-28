@@ -25,14 +25,14 @@ def test_key_down_up_sends_state_params(fake):
     c = build(fake)
     c.key_down("ControlRight")
     c.key_up("ControlRight")
-    assert events_sent(fake) == [("ControlRight", "down"), ("ControlRight", "up")]
+    assert events_sent(fake) == [("ControlRight", "true"), ("ControlRight", "false")]
 
 
 def test_press_key_is_discrete_down_then_up(fake):
     fake.token = "t"
     fake.add("POST", "/api/hid/events/send_key", lambda r: (200, {"ok": True}))
     build(fake).press_key("Enter")
-    assert events_sent(fake) == [("Enter", "down"), ("Enter", "up")]
+    assert events_sent(fake) == [("Enter", "true"), ("Enter", "false")]
 
 
 def test_type_text_plain_and_shifted(fake):
@@ -40,9 +40,9 @@ def test_type_text_plain_and_shifted(fake):
     fake.add("POST", "/api/hid/events/send_key", lambda r: (200, {"ok": True}))
     build(fake).type_text("aB2")
     assert events_sent(fake) == [
-        ("KeyA", "down"), ("KeyA", "up"),
-        ("ShiftLeft", "down"), ("KeyB", "down"), ("KeyB", "up"), ("ShiftLeft", "up"),
-        ("Digit2", "down"), ("Digit2", "up"),
+        ("KeyA", "true"), ("KeyA", "false"),
+        ("ShiftLeft", "true"), ("KeyB", "true"), ("KeyB", "false"), ("ShiftLeft", "false"),
+        ("Digit2", "true"), ("Digit2", "false"),
     ]
 
 

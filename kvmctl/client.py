@@ -6,6 +6,9 @@ GLKVM (KVMD 4.82): URL-encoded form login, lowercase ``token`` header auth,
 """
 from __future__ import annotations
 
+import asyncio
+import ssl
+import threading
 from typing import Any, Optional
 
 import httpx
@@ -40,6 +43,7 @@ class KvmClient:
         self._transport: Optional[httpx.BaseTransport] = None  # test injection point
         self._timeout = timeout
         self.host = host
+        self._stream = None
 
     # -- plumbing ---------------------------------------------------------
 
@@ -164,7 +168,7 @@ class KvmClient:
         self._request(
             "POST",
             "/api/hid/events/send_key",
-            params={"key": key, "state": state},
+            params={"key": key, "state": "true" if state == "down" else "false"},
         )
 
     def type_text(self, text: str) -> None:
@@ -227,3 +231,72 @@ class KvmClient:
                 "OCR unavailable on device and no local OCR engine installed"
             ) from exc
         return pytesseract.image_to_string(Image.open(io.BytesIO(image_bytes)))
+
+    # -- stream lifecycle -------------------------------------------------
+
+    def open_stream(self):
+        """Open and retain the authenticated stream WebSocket.
+
+        The socket must remain open while snapshots are used.  This is a
+        concrete implementation of the injected opener used by recovery.py.
+        """
+        try:
+            from websockets.asyncio.client import connect
+        except ImportError as exc:
+            raise RuntimeError("stream support requires the 'websockets' package") from exc
+        self.close_stream()
+        scheme = "wss" if self.base_url.startswith("https://") else "ws"
+        url = self.base_url.split("://", 1)[1] + "/api/ws?stream=1"
+        ws_url = f"{scheme}://{url}"
+        kwargs: dict[str, Any] = {"additional_headers": {}}
+        if self.host:
+            kwargs["additional_headers"]["Origin"] = f"https://{self.host}"
+        if self.token:
+            kwargs["additional_headers"]["token"] = self.token
+        if scheme == "wss" and self.verify is False:
+            tls = ssl.create_default_context()
+            tls.check_hostname = False
+            tls.verify_mode = ssl.CERT_NONE
+            kwargs["ssl"] = tls
+        elif scheme == "wss" and isinstance(self.verify, str):
+            kwargs["ssl"] = ssl.create_default_context(cafile=self.verify)
+        ready = threading.Event()
+        state: dict[str, Any] = {}
+
+        def run() -> None:
+            async def serve() -> None:
+                try:
+                    state["ws"] = await connect(ws_url, **kwargs)
+                except BaseException as exc:  # propagate handshake failures
+                    state["error"] = exc
+                finally:
+                    ready.set()
+                if "ws" in state:
+                    await state["ws"].wait_closed()
+
+            loop = asyncio.new_event_loop()
+            state["loop"] = loop
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(serve())
+            loop.close()
+
+        thread = threading.Thread(target=run, name="kvmctl-stream", daemon=True)
+        thread.start()
+        if not ready.wait(self._timeout):
+            raise TimeoutError("stream WebSocket handshake timed out")
+        if "error" in state:
+            raise state["error"]
+        self._stream = (state, thread)
+        return self._stream
+
+    def close_stream(self) -> None:
+        """Close the retained stream, if any."""
+        if self._stream is not None:
+            state, thread = self._stream
+            ws = state.get("ws")
+            loop = state.get("loop")
+            if ws is not None and loop is not None and not loop.is_closed():
+                future = asyncio.run_coroutine_threadsafe(ws.close(), loop)
+                future.result(timeout=self._timeout)
+            thread.join(timeout=self._timeout)
+            self._stream = None

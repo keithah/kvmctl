@@ -94,10 +94,10 @@ def test_execute_emits_sequential_discrete_events(fake):
         inter_key_delay=0.15, settle_delay=2.0,
     )
     assert events_sent(fake) == [(k, s) for k, s in [
-        ("ControlRight", "down"), ("ControlRight", "up"),
-        ("ControlRight", "down"), ("ControlRight", "up"),
-        ("Digit3", "down"), ("Digit3", "up"),
-        ("Enter", "down"), ("Enter", "up"),
+        ("ControlRight", "true"), ("ControlRight", "false"),
+        ("ControlRight", "true"), ("ControlRight", "false"),
+        ("Digit3", "true"), ("Digit3", "false"),
+        ("Enter", "true"), ("Enter", "false"),
     ]]
     # 7 inter-key gaps + 1 settle = 8 sleeps; gaps use the configured delay.
     assert sleeps[:-1] == [0.15] * 7 and sleeps[-1] == 2.0

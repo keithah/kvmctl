@@ -85,3 +85,19 @@ def test_no_real_network_in_tests():
     # Guard: recovery uses only injected transports; nothing here dials out.
     from kvmctl.recovery import DEFAULT_NUDGE as _d  # noqa: F401
     assert _d == {"desired_fps": 40, "quality": 80}
+
+
+def test_selection_reopens_concrete_stream_after_otg():
+    from kvmctl.machines import SelectOptions, SessionState, VerifyPolicy, select_machine
+
+    fake = make(FakeKvmd(fail_first=0))
+    opened = []
+    fake._stream = object()
+    fake.open_stream = lambda: opened.append(True)
+    # Avoid requiring a stream on the mocked transport while exercising the
+    # selection integration point.
+    select_machine(fake, SessionState(), "pve1",
+                   options=SelectOptions(rearm=True, settle_s=0,
+                                         verify_policy=VerifyPolicy.NONE),
+                   sleep=lambda _: None)
+    assert opened == [True]

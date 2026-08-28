@@ -63,7 +63,9 @@ def test_fastmcp_registers_shared_tools():
             tools = await session.list_tools()
             return {tool.name for tool in tools.tools}
     names = asyncio.run(exercise())
-    assert names == {"capabilities", "snapshot", "ocr", "verify", "select",
+    assert names == {"capabilities", "snapshot", "ocr", "verify",
+                     "host.identity.inspect", "host.graphics.inspect",
+                     "service.render_access.inspect", "host.reboot", "select",
                      "hid_reset", "rearm_otg", "exec_command"}
 
 

@@ -360,6 +360,15 @@ def select_machine(client: KvmClient, session: SessionState, machine_name: str,
 
     if opts.rearm:
         otg_bounce(client, sleep=sleep)
+        # A Comet OTG bounce tears down ustreamer. Reopen the retained stream
+        # when this concrete client provides one; injected test clients do not
+        # need network behavior.
+        reopen = getattr(client, "open_stream", None) if getattr(client, "_stream", None) is not None else None
+        if reopen is not None:
+            try:
+                reopen()
+            except Exception as exc:
+                raise SwitchFailure(f"stream recovery failed after OTG bounce: {exc}") from exc
 
     keys = [*REARM_KEYS, f"Digit{machine.port}", "Enter"]
     try:
