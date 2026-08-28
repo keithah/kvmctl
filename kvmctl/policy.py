@@ -25,7 +25,7 @@ READ_ONLY_OPERATIONS = frozenset({
 })
 
 WRITE_OPERATIONS = frozenset({
-    "select", "hid_reset", "exec_command", "rearm_otg",
+    "select", "hid_reset", "exec_command", "rearm_otg", "host.reboot",
 })
 
 

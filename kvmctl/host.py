@@ -5,8 +5,14 @@ command and does not accept caller-supplied command arguments.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import time
 from typing import Callable, Protocol, Sequence, cast
+
+from kvmctl.results import operation_result
+from kvmctl.policy import PolicyError
 
 
 class ProbeError(ValueError):
@@ -151,3 +157,94 @@ def run_probe(name: str, runner: ArgvRunner, *, max_output_bytes: int = 65536) -
 
 probe = run_probe
 NAMED_PROBES = frozenset(_PROBES)
+
+
+def reboot_confirmation(target: str, operation: str = "host.reboot") -> str:
+    """Return the normalized confirmation token for one reboot target."""
+    plan = json.dumps({"operation": operation, "target": target},
+                      sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(plan.encode("utf-8")).hexdigest()
+
+
+class HostRebootError(RuntimeError):
+    """Internal lifecycle failure; callers receive stable result codes."""
+
+
+class HostAdapter:
+    """Named host operations over an argv-only runner."""
+
+    def __init__(self, runner: ArgvRunner, *, max_output_bytes: int = 65536):
+        self.runner = runner
+        self.max_output_bytes = max_output_bytes
+
+    def identity(self) -> dict:
+        return run_probe("host.identity.inspect", self.runner,
+                         max_output_bytes=self.max_output_bytes)
+
+    def _ready_identity(self) -> dict:
+        return self.identity()
+
+    def reboot(self, target: str, confirmation: str, *, write_enabled: bool = False,
+               attempts: int = 5, delay: float = 1.0,
+               sleep: Callable[[float], None] = time.sleep) -> dict:
+        if not write_enabled:
+            raise PolicyError("policy refused: host.reboot requires write authorization")
+        if confirmation != reboot_confirmation(target):
+            raise PolicyError("host.reboot requires explicit confirmation bound to target and operation")
+        if not isinstance(attempts, int) or attempts < 1:
+            raise ValueError("attempts must be a positive integer")
+        preflight = self.identity()
+        if preflight.get("hostname") != target:
+            return operation_result(operation="host.reboot", target=target,
+                                    transport="host", read_only=False, ok=False,
+                                    changed=False, state="mismatch",
+                                    evidence={"preflight": {"hostname": preflight.get("hostname")}},
+                                    error={"code": "host_identity_mismatch",
+                                           "retryable": False, "requires_human": True})
+        try:
+            result = self.runner(("systemctl", "reboot"))
+        except Exception:
+            return operation_result(operation="host.reboot", target=target,
+                                    transport="host", read_only=False, ok=False,
+                                    evidence={"preflight": {"hostname": target}},
+                                    error={"code": "host_reboot_failed", "retryable": True,
+                                           "requires_human": False})
+        if isinstance(result, tuple) and result and result[0] != 0:
+            return operation_result(operation="host.reboot", target=target,
+                                    transport="host", read_only=False, ok=False,
+                                    evidence={"preflight": {"hostname": target}},
+                                    error={"code": "host_reboot_failed", "retryable": True,
+                                           "requires_human": False})
+
+        disappeared = False
+        returned = None
+        for index in range(attempts):
+            if index:
+                sleep(delay)
+            try:
+                returned = self._ready_identity()
+            except ProbeError:
+                if not disappeared:
+                    disappeared = True
+                continue
+            if disappeared:
+                if returned.get("hostname") != target:
+                    return operation_result(
+                        operation="host.reboot", target=target, transport="host",
+                        read_only=False, ok=False, changed=True, state="mismatch",
+                        evidence={"preflight": {"hostname": target},
+                                  "post_return": {"hostname": returned.get("hostname")}},
+                        error={"code": "host_identity_mismatch", "retryable": False,
+                               "requires_human": True})
+                return operation_result(
+                    operation="host.reboot", target=target, transport="host",
+                    read_only=False, ok=True, changed=True, state="ready",
+                    evidence={"preflight": {"hostname": target}, "disappeared": True,
+                              "post_return": {"hostname": target}})
+        return operation_result(operation="host.reboot", target=target,
+                                transport="host", read_only=False, ok=False,
+                                changed=disappeared, state="timeout",
+                                evidence={"preflight": {"hostname": target},
+                                          "disappeared": disappeared},
+                                error={"code": "host_reboot_timeout", "retryable": True,
+                                       "requires_human": False})

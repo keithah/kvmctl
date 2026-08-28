@@ -24,6 +24,7 @@ from kvmctl.machines import (
     select_machine,
 )
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
+from kvmctl.host import ArgvRunner, HostAdapter
 
 
 def _evidence(operation: str, transport: str, read_only: bool,
@@ -48,6 +49,7 @@ class SemanticSurface:
         write_enabled: bool = False,
         ssh_allowlist: tuple[str, ...] = (),
         ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
+        host_runner: Optional[ArgvRunner] = None,
     ):
         self.client = client
         self.session = session or SessionState()
@@ -56,6 +58,7 @@ class SemanticSurface:
             ssh_allowlist=ssh_allowlist,
             ssh_runner=ssh_runner,
         )
+        self.host = HostAdapter(host_runner) if host_runner is not None else None
 
     # -- policy conveniences -------------------------------------------------
 
@@ -171,6 +174,15 @@ class SemanticSurface:
         self.policy.require_write("rearm_otg")
         otg_bounce(self.client, sleep=sleep)
         return _evidence("rearm_otg", "kvm", read_only=False)
+
+    def host_reboot(self, target: str, confirmation: str, *,
+                    attempts: int = 5, delay: float = 1.0,
+                    sleep: Callable[[float], None] = time.sleep) -> dict:
+        self.policy.require_write("host.reboot")
+        if self.host is None:
+            raise PolicyError("host.reboot requires a configured host runner")
+        return self.host.reboot(target, confirmation, write_enabled=True,
+                                attempts=attempts, delay=delay, sleep=sleep)
 
     def exec_command(self, command: str, *, transport: str = "") -> dict:
         self.policy.require_write("exec_command")
