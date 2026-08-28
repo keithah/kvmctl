@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from kvmctl.sequences import plan_hash
+from kvmctl.sequences import SequencePlan, UnexpectedScreenPolicy, plan_hash
 from kvmctl.workflows import (
     WorkflowDefinition,
     WorkflowError,
@@ -124,3 +124,51 @@ def test_definitions_are_frozen_and_target_independent_requires_opt_in():
         WorkflowRepository.from_mappings([{**mapping(target=None)}])
     with pytest.raises((AttributeError, TypeError)):
         d.name = "changed"
+
+
+def test_direct_definition_derives_revision_and_repository_validates_typed_inputs():
+    plan = SequencePlan(
+        target="pve2",
+        actions=(),
+        unexpected_screen_policy=UnexpectedScreenPolicy.ABORT,
+    )
+    with pytest.raises(WorkflowError):
+        WorkflowDefinition("bad", plan)
+
+    valid_plan = WorkflowDefinition.from_mapping(mapping()).plan
+    definition = WorkflowDefinition("direct", valid_plan)
+    assert definition.revision.startswith("sha256:")
+    assert WorkflowRepository([definition]).list() == (definition,)
+
+
+def test_target_independent_resolution_returns_target_bound_plan_or_rejects_missing_target():
+    repo = WorkflowRepository.from_mappings([{**mapping(target=None), "target_independent": True}])
+    definition = repo.list()[0]
+    resolved = repo.resolve(definition.name, definition.revision, "pve9")
+    assert resolved.plan.target == "pve9"
+    assert resolved.resolved_target == "pve9"
+    assert resolved.revision == definition.revision
+    with pytest.raises(WorkflowError):
+        repo.resolve(definition.name, definition.revision)
+
+
+@pytest.mark.parametrize("value", [
+    "token=abc123", "password: hunter2", "Authorization: Bearer abc",
+    "Cookie: session=abc", "my secret value",
+])
+def test_inspection_redacts_secret_like_text_values(value):
+    raw = mapping()
+    raw["steps"] = [{"type": "text", "value": value}]
+    definition = WorkflowRepository.from_mappings([raw]).list()[0]
+    inspected = definition.to_mapping()
+    assert inspected["actions"][0]["value"] == "[REDACTED]"
+    assert inspected["actions"] == inspected["steps"]
+
+
+@pytest.mark.parametrize("bad_name", [["x"], {"x": 1}])
+def test_malformed_lookup_names_raise_bounded_workflow_error(bad_name):
+    repo = WorkflowRepository.from_mappings([mapping()])
+    with pytest.raises(WorkflowError, match="^invalid workflow name$"):
+        repo.resolve(bad_name, repo.list()[0].revision, "pve2")
+    with pytest.raises(WorkflowError, match="^invalid workflow name$"):
+        repo.inspect(bad_name)
