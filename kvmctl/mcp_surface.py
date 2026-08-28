@@ -9,6 +9,7 @@ Context dict keys:
     client:        configured KvmClient (required)
     session:       optional SessionState (shared across calls)
     ssh_runner:    callable(cmd) -> {rc, stdout, stderr}  (for exec_command)
+    host_runner:   argv-only callable for named host probes/reboot
     ssh_allowlist: tuple of allowed base commands (for exec_command)
     write_enabled: bool gate, default False
 """
@@ -34,6 +35,7 @@ def _surface(context: dict) -> SemanticSurface:
         write_enabled=bool(context.get("write_enabled")),
         ssh_allowlist=tuple(context.get("ssh_allowlist") or ()),
         ssh_runner=context.get("ssh_runner"),
+        host_runner=context.get("host_runner"),
     )
 
 
@@ -61,6 +63,17 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
             if sleep and name in ("verify",):
                 kw["sleep"] = sleep
             out = surf.verify(arguments["machine"], policy=arguments.get("policy"), **kw)
+        elif name == "host.identity.inspect":
+            out = surf.host_identity_inspect()
+        elif name == "host.graphics.inspect":
+            out = surf.host_graphics_inspect()
+        elif name == "service.render_access.inspect":
+            out = surf.service_render_access_inspect()
+        elif name == "host.reboot":
+            out = surf.host_reboot(arguments["target"], arguments["confirmation"],
+                                    attempts=int(arguments.get("attempts", 5)),
+                                    delay=float(arguments.get("delay", 1.0)),
+                                    sleep=sleep or _no_sleep)
         elif name == "select":
             transport = str(arguments.get("transport", ""))
             if transport != "kvm":

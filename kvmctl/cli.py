@@ -15,6 +15,7 @@ from kvmctl.client import KvmClient
 from kvmctl.machines import SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
+from kvmctl.host import ArgvRunner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,6 +45,14 @@ def build_parser() -> argparse.ArgumentParser:
     vp.add_argument("machine")
     vp.add_argument("--policy", default=None)
 
+    sub.add_parser("host-identity-inspect")
+    sub.add_parser("host-graphics-inspect")
+    sub.add_parser("service-render-access-inspect")
+    rb = sub.add_parser("host-reboot")
+    rb.add_argument("target")
+    rb.add_argument("--confirmation", required=True,
+                     help="confirmation token bound to this target and host.reboot")
+
     sel = sub.add_parser("select")
     sel.add_argument("machine")
     sel.add_argument("--verify-policy", default=None)
@@ -59,7 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
-         sleep: Optional[Callable[[float], None]] = None) -> int:
+         sleep: Optional[Callable[[float], None]] = None,
+         host_runner: Optional[ArgvRunner] = None) -> int:
     args = build_parser().parse_args(argv)
     if client is None:
         verify: bool | str = True
@@ -74,7 +84,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             return 2
         client.set_token(token)
 
-    surf = SemanticSurface(client, session=SessionState())
+    surf = SemanticSurface(client, session=SessionState(), host_runner=host_runner)
     surf.write_enabled = args.yes
     sleep = sleep or _real_sleep
 
@@ -98,6 +108,15 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             out = surf.ocr(data)
         elif args.command == "verify":
             out = surf.verify(args.machine, policy=args.policy, sleep=sleep)
+        elif args.command == "host-identity-inspect":
+            out = surf.host_identity_inspect()
+        elif args.command == "host-graphics-inspect":
+            out = surf.host_graphics_inspect()
+        elif args.command == "service-render-access-inspect":
+            out = surf.service_render_access_inspect()
+        elif args.command == "host-reboot":
+            need_write()
+            out = surf.host_reboot(args.target, args.confirmation, sleep=sleep)
         elif args.command == "select":
             need_write()
             need_transport("select")

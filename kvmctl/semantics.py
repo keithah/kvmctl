@@ -24,7 +24,8 @@ from kvmctl.machines import (
     select_machine,
 )
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
-from kvmctl.host import ArgvRunner, HostAdapter
+from kvmctl.host import ArgvRunner, HostAdapter, run_probe
+from kvmctl.results import operation_result
 
 
 def _evidence(operation: str, transport: str, read_only: bool,
@@ -137,6 +138,24 @@ class SemanticSurface:
                          if self.session.current else "unknown"),
             detail=detail[:300],
         )
+
+    def _host_inspect(self, operation: str) -> dict:
+        if self.host is None:
+            raise PolicyError(f"{operation} requires a configured host runner")
+        evidence = run_probe(operation, self.host.runner,
+                             max_output_bytes=self.host.max_output_bytes)
+        return operation_result(operation=operation, transport="host",
+                                read_only=True, state="observed",
+                                evidence=evidence)
+
+    def host_identity_inspect(self) -> dict:
+        return self._host_inspect("host.identity.inspect")
+
+    def host_graphics_inspect(self) -> dict:
+        return self._host_inspect("host.graphics.inspect")
+
+    def service_render_access_inspect(self) -> dict:
+        return self._host_inspect("service.render_access.inspect")
 
     # -- mutating (write-gated) operations ------------------------------------
 

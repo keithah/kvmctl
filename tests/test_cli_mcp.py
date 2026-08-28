@@ -72,13 +72,17 @@ def test_cli_select_rejects_ssh_transport(capsys):
 
 def test_mcp_spec_declares_readonly_and_gates():
     for tool in TOOL_SPEC:
-        if tool["name"] in ("capabilities", "snapshot", "ocr", "verify"):
+        if tool["name"] in ("capabilities", "snapshot", "ocr", "verify",
+                             "host.identity.inspect", "host.graphics.inspect",
+                             "service.render_access.inspect"):
             assert tool.get("read_only") is True
         else:
             assert tool.get("write_gate") is True
     names = {t["name"] for t in TOOL_SPEC}
     assert names == {"capabilities", "snapshot", "ocr", "verify",
-                     "select", "hid_reset", "rearm_otg", "exec_command"}
+                     "host.identity.inspect", "host.graphics.inspect",
+                     "service.render_access.inspect", "host.reboot", "select",
+                     "hid_reset", "rearm_otg", "exec_command"}
 
 
 def test_mcp_dispatch_enforces_policy():

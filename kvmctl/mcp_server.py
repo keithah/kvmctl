@@ -19,7 +19,8 @@ def client_from_env(*, return_settings: bool = False):
     return (client, settings) if return_settings else client
 
 
-def build_mcp_server(*, client=None, settings: Settings | None = None) -> FastMCP:
+def build_mcp_server(*, client=None, settings: Settings | None = None,
+                     host_runner=None) -> FastMCP:
     if client is None:
         client, loaded = client_from_env(return_settings=True)
         settings = settings or loaded
@@ -37,6 +38,7 @@ def build_mcp_server(*, client=None, settings: Settings | None = None) -> FastMC
             "write_enabled": settings.write_enabled,
             "ssh_allowlist": settings.ssh_allowlist,
             "sleep": time.sleep,
+            "host_runner": host_runner,
         })
         return json.loads(raw)
 
@@ -63,6 +65,18 @@ def build_mcp_server(*, client=None, settings: Settings | None = None) -> FastMC
     def verify(machine: str, policy: str = "none") -> dict[str, Any]:
         return call("verify", {"machine": machine, "policy": policy})
 
+    @server.tool(name="host.identity.inspect", description="Inspect configured host identity.")
+    def host_identity_inspect() -> dict[str, Any]:
+        return call("host.identity.inspect", {})
+
+    @server.tool(name="host.graphics.inspect", description="Inspect configured host graphics and DRM nodes.")
+    def host_graphics_inspect() -> dict[str, Any]:
+        return call("host.graphics.inspect", {})
+
+    @server.tool(name="service.render_access.inspect", description="Inspect render service and device access.")
+    def service_render_access_inspect() -> dict[str, Any]:
+        return call("service.render_access.inspect", {})
+
     @server.tool(name="select", description="Switch KVM port; requires explicit KVM transport and write authorization.")
     def select(machine: str, transport: str = "", verify_policy: str = "none",
                rearm: bool = True, settle_s: float = 5.0) -> dict[str, Any]:
@@ -80,6 +94,12 @@ def build_mcp_server(*, client=None, settings: Settings | None = None) -> FastMC
     @server.tool(name="exec_command", description="Run an allowlisted SSH command; requires explicit SSH transport.")
     def exec_command(command: str, transport: str = "") -> dict[str, Any]:
         return call("exec_command", {"command": command, "transport": transport})
+
+    @server.tool(name="host.reboot", description="Reboot a named host; requires write authorization and target-bound confirmation.")
+    def host_reboot(target: str, confirmation: str, attempts: int = 5,
+                    delay: float = 1.0) -> dict[str, Any]:
+        return call("host.reboot", {"target": target, "confirmation": confirmation,
+                                     "attempts": attempts, "delay": delay})
 
     return server
 
