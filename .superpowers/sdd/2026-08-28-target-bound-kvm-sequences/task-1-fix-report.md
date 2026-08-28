@@ -19,7 +19,7 @@
 
 ## Commit
 
-`COMMIT_PENDING` (will be replaced with the final commit ID after amend).
+`6bcaacc75b2773e6b7137b0ea3eac41372c19952` (fix commit).
 
 ## Concerns
 
