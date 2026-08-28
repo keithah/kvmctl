@@ -178,10 +178,15 @@ def _status(runner: ArgvRunner, argv: tuple[str, ...], limit: int, *, timeout: f
         if result.return_code not in success_codes and result.return_code not in failure_codes:
             raise ProbeError("malformed render access output")
         return result.return_code in success_codes
+    if result.return_code != 0:
+        raise ProbeError("malformed render access output")
     value = result.stdout
     if not isinstance(value, (str, bytes)):
         raise ProbeError("malformed render access output")
-    value = value.decode() if isinstance(value, bytes) else value
+    try:
+        value = value.decode() if isinstance(value, bytes) else value
+    except UnicodeDecodeError as exc:
+        raise ProbeError("malformed render access output") from exc
     value = value.strip()
     if value not in legacy_values:
         raise ProbeError("malformed render access output")

@@ -51,6 +51,16 @@ def test_render_access_probe_rejects_unexpected_status_codes():
         run_probe("service.render_access.inspect", runner)
 
 
+def test_render_access_probe_rejects_nonzero_status_even_with_text_output():
+    runner = ScriptedRunner({
+        ("systemctl", "is-active", "--quiet", "kvm-render"): RunnerResult(3, "active\n"),
+        ("test", "-r", "/dev/dri/renderD128"): RunnerResult(0, ""),
+        ("test", "-w", "/dev/dri/renderD128"): RunnerResult(1, ""),
+    })
+    with pytest.raises(ProbeError, match="malformed"):
+        run_probe("service.render_access.inspect", runner)
+
+
 def test_unknown_probe_and_malformed_output_fail_closed():
     with pytest.raises(ProbeError, match="unknown probe"):
         run_probe("host.reboot", lambda argv: "")
