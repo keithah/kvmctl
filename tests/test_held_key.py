@@ -61,8 +61,8 @@ def test_held_key_execution_times_hold_and_gap(fake):
     # per key: down, hold 120ms, up, gap 150ms -> [0.12, 0.15] * 2 keys, then settle
     assert sleeps == [HOLD_MS, GAP_S, HOLD_MS, GAP_S, 0.5]
     assert events_sent(fake) == [
-        ("ControlRight", "down"), ("ControlRight", "up"),
-        ("Digit4", "down"), ("Digit4", "up"),
+        ("ControlRight", "true"), ("ControlRight", "false"),
+        ("Digit4", "true"), ("Digit4", "false"),
     ]
 
 

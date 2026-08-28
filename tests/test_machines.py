@@ -140,10 +140,10 @@ def test_held_key_event_shape_and_order():
     events = fake.key_events()
     # strictly alternating down/up, no simultaneous holds, correct order
     assert [(k, s) for k, s in events] == [
-        ("ControlRight", "down"), ("ControlRight", "up"),
-        ("ControlRight", "down"), ("ControlRight", "up"),
-        ("Digit2", "down"), ("Digit2", "up"),
-        ("Enter", "down"), ("Enter", "up"),
+        ("ControlRight", "true"), ("ControlRight", "false"),
+        ("ControlRight", "true"), ("ControlRight", "false"),
+        ("Digit2", "true"), ("Digit2", "false"),
+        ("Enter", "true"), ("Enter", "false"),
     ]
 
 

@@ -1,90 +1,123 @@
 # kvmctl operator runbook: GLKVM / TH41-3
 
-This runbook covers safe, non-destructive operation of the GLKVM Comet and the Terived TH41-3 HDMI/KVM switch.
+This runbook covers safe, non-destructive operation of a GLKVM Comet and the TH41-3 HDMI/KVM switch.
 
 ## Rack map
 
 | TH41-3 port | Target | Address / identity | Status |
 |---|---|---|---|
-| 1 | pve1 | `192.168.42.3:8006`, console prompt `pve1 login:` | Working; live-verified 2026-08-27 |
-| 2 | pve2 | `192.168.42.4:8006`, console prompt `pve2 login:` | Working; verified selected target |
-| 3 | Mac mini Kodi build box | M1 Mac | Mapped; switching has been visually verified |
-| 4 | pve3 | `192.168.42.5` | Mapped; switching has been visually verified |
+| 1 | pve1 | `192.168.42.3:8006`, console prompt `pve1 login:` | Live-verified |
+| 2 | pve2 | `192.168.42.4:8006`, console prompt `pve2 login:` | Currently selected and live-verified |
+| 3 | Mac mini Kodi build box | M1 Mac | Mapped; switching visually verified |
+| 4 | pve3 | `192.168.42.5` | Mapped; switching visually verified |
 
 The Comet must be connected to the TH41-3 port marked with the keyboard icon, and the physical Hot key switch must be on (green LED lit).
 
-## Safe read-only checks
+## Credentials and common variables
 
-Use the configured GLKVM URL and retrieve credentials from 1Password; never put passwords or tokens in this repository, shell history, logs, or screenshots.
-
-```sh
-PYTHONPATH=. .venv/bin/pytest -q
-```
-
-The client is read-only by default. Safe semantic checks are `capabilities`, `snapshot`, and `verify`:
+Retrieve the GLKVM URL, virtual host, username, and password from the configured secret manager at runtime. Never put credentials in this repository, shell history, logs, screenshots, or review comments.
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure capabilities
-kvmctl --url https://<glkvm-host> --insecure verify pve2
+export KVM_URL='https://<glkvm-address>'
+export KVM_HOST='glkvm.local'
+export KVM_USER='admin'
+# Inject this from a secret manager; do not commit or print it.
+export KVM_PASSWORD='***'
 ```
 
-A snapshot requires an authenticated `stream=1` WebSocket to remain open. A 503 without that held stream is expected and does not by itself indicate a dead camera.
+The device uses an authenticated stream WebSocket while snapshots are captured. A self-signed device certificate requires `--insecure` only when the device is explicitly trusted.
 
-## Selecting a target
-
-Selection changes KVM state. It requires both explicit authorization and an explicit transport:
+## Scenario 1: safe read-only checks
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure --yes --transport kvm select pve2
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure capabilities
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure verify pve2
 ```
 
-The implemented and visually verified recipe is:
+A snapshot needs an authenticated `stream=1` WebSocket to remain open. A 503 without that held stream is expected and does not by itself indicate a dead camera.
 
-1. Re-arm the switch by bouncing the Comet OTG gadget: enable both storage functions, wait about 8 seconds, then disable both and wait about 12 seconds.
-2. Send, strictly sequentially, `ControlRight` held for 120 ms and released, then a 150 ms gap; repeat Right Ctrl; send `Digit<N>` with the same hold/gap; send `Enter`.
-3. Wait about 5 seconds, reopen the stream WebSocket, and verify the target from a fresh snapshot. After an OTG bounce, one initial snapshot 503 and an encoder nudge are expected streamer recovery behavior.
+## Scenario 2: select and verify a target
 
-Do not use `ControlLeft`; the TH41-3 hotkey engine requires Right Ctrl. Do not send factory reset (`Right Ctrl` x2, `Escape`, `Enter` x3).
-
-## Recovery
-
-### HID reset (safe, state-changing)
-
-Use only when the HID path is stuck and no target selection is needed:
+Selection changes KVM state and requires both `--yes` and explicit `--transport kvm`:
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure --yes hid-reset
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes --transport kvm select pve2
 ```
 
-This resets the Comet HID subsystem. It does not power-cycle a target and does not replace a TH41-3 switch reset.
+The reusable implementation performs the verified sequence:
 
-### Re-arm after a failed selection
+1. Re-arm the Comet OTG gadget when enabled: storage functions on for about 8 s, then off for about 12 s.
+2. Hold and release `ControlRight`, twice; send the target `Digit<N>`; send `Enter`. Each hold is about 120 ms with a 150 ms gap.
+3. Settle about 5 s, recover the stream if needed, capture a fresh snapshot, and verify the target prompt or identity.
+
+Expected sanitized result:
+
+```json
+{"operation":"select","transport":"kvm","read_only":false,"ok":true,"evidence":{"machine":"pve2","port":2,"verified":true,"state":"verified","detail":"prompt pattern match"}}
+```
+
+## Scenario 3: streamer recovery
+
+After OTG re-arm, one initial snapshot HTTP 503 may be normal. The recovery path nudges the encoder, retries the snapshot, and reopens the authenticated stream WebSocket. Do not bypass verification or enter a target password while the stream is recovering.
+
+## Scenario 4: failed selection
+
+Inspect a fresh snapshot first. If the HID path is stuck, re-arm OTG and repeat the selection only after confirming the physical wiring:
 
 ```sh
-kvmctl --url https://<glkvm-host> --insecure --yes rearm-otg
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes rearm-otg
 ```
 
-Then repeat selection and verification. Failed hotkey prefixes can leak the digit and Enter to the focused console; clean up with a non-destructive Ctrl-C if necessary, and verify that no password prompt or pending command remains.
+A failed hotkey prefix can leak the digit and Enter to the focused console. Clean up only with a non-destructive `Ctrl-C` if necessary, then verify that no password prompt or pending command remains.
 
-### If the hotkey engine remains inactive
+## Scenario 5: HID-only recovery
 
-1. Confirm the green Hot key On LED is lit.
-2. Confirm the Comet USB cable is in the TH41-3 keyboard-marked port.
-3. Power-cycle the TH41-3 itself only if physical intervention is authorized; it returns to its default port (2).
-4. Re-arm OTG, select pve2, and verify from a fresh snapshot.
+Use this when the HID path is stuck and no target selection is needed:
 
-Do not use the manual's factory-reset sequence. The manual's `[R]` switch-side reset is itself a hotkey and is unavailable when the hotkey engine is disarmed.
+```sh
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes hid-reset
+```
+
+This resets the Comet HID subsystem; it does not power-cycle a target or replace a TH41-3 switch reset.
+
+## Scenario 6: named host operations
+
+Named host operations use a configured argv-only runner and do not accept arbitrary commands:
+
+```sh
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure host-identity-inspect
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure host-graphics-inspect
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
+  --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure service-render-access-inspect
+```
+
+Host reboot is separately authorized and requires a target-bound confirmation token. Do not test it during KVM switching validation.
 
 ## Safety boundaries
 
-- Do not issue power, shutdown, reboot, firmware, storage, factory-reset, or arbitrary-console commands during verification.
-- Leave the Comet storage gadget off (`start_cdrom=false`, `start_flash=false`) after any re-arm.
+- Do not issue power, shutdown, reboot, firmware, storage, factory-reset, or arbitrary-console commands during KVM verification.
+- Leave the Comet storage gadget off after any re-arm.
 - Leave the console at a clean login prompt; do not submit credentials.
-- Treat pve1 as a verified, working target; leave it at its clean login prompt after verification.
+- Use `ControlRight`, never `ControlLeft`, for the TH41-3 protocol.
+- Unknown or disabled machine names must not generate HID traffic.
 
 ## Verification record
 
-- Full repository suite: 107 passed, 3 skipped (`.venv/bin/python -m pytest tests -q`, verified on merged main).
-- Existing visual evidence confirms pve2: `evidence/glk_where_now.jpg` shows `pve2 login:` and `https://192.168.42.4:8006/`.
-- Fresh live verification (2026-08-27, authenticated GLKVM stream): after the documented OTG re-arm, selected TH41-3 port 1 using held Right Ctrl ×2 → Digit1 → Enter and captured `evidence/pve1-live-current-after.jpg`. Visual review and OCR identity match confirm `https://192.168.42.3:8006/` and the `pve1 login:` prompt; sanitized details are in `evidence/pve1-live-current.json`.
-- Existing probe record documents the port 1/2/3/4 mapping and held-key/OTG-rearm recipe: `PROBE_NOTES.md`.
+- Full repository suite: **142 passed, 3 skipped**.
+- Live reusable CLI selection: **pve2 selected and verified**; visible evidence showed `https://192.168.42.4:8006/` and `pve2 login:`.
+- The device-specific port mapping and protocol timings are recorded in [`../PROBE_NOTES.md`](../PROBE_NOTES.md).

@@ -70,10 +70,10 @@ def test_mcp_select_with_test_mode_allows_no_sleep():
         context=ctx))
     events = [(r["params"].get("key"), r["params"].get("state"))
               for r in fake.requests if r["path"] == "/api/hid/events/send_key"]
-    assert events == [("ControlRight", "down"), ("ControlRight", "up"),
-                      ("ControlRight", "down"), ("ControlRight", "up"),
-                      ("Digit2", "down"), ("Digit2", "up"),
-                      ("Enter", "down"), ("Enter", "up")]
+    assert events == [("ControlRight", "true"), ("ControlRight", "false"),
+                           ("ControlRight", "true"), ("ControlRight", "false"),
+                      ("Digit2", "true"), ("Digit2", "false"),
+                      ("Enter", "true"), ("Enter", "false")]
     assert out["ok"] is True
 
 

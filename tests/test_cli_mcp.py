@@ -33,6 +33,12 @@ def test_cli_capabilities_json(capsys):
     assert out["evidence"]["caps"]["hid"] is True
 
 
+def test_cli_passes_virtual_host_to_client():
+    parser = build_parser()
+    args = parser.parse_args(["--url", "https://kvm.test", "--host", "glkvm.local", "capabilities"])
+    assert args.host == "glkvm.local"
+
+
 def test_cli_write_op_requires_yes_flag():
     c, _ = make_client()
     with pytest.raises(SystemExit):

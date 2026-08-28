@@ -24,7 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Semantic KVM control (read-only unless --yes).",
     )
     p.add_argument("--url", required=True, help="KVMD base URL")
+    p.add_argument("--host", default=None, help="HTTP Host / virtual host header")
     p.add_argument("--token", default=None, help="auth token (else KVMCTL_TOKEN env)")
+    p.add_argument("--user", default=None, help="login user (else KVMCTL_USER env)")
+    p.add_argument("--password", default=None, help="login password (else KVMCTL_PASSWORD env)")
     p.add_argument("--insecure", action="store_true", help="disable TLS verification")
     p.add_argument("--ca-bundle", default=None)
     p.add_argument("--yes", action="store_true",
@@ -77,12 +80,18 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             verify = False
         elif args.ca_bundle:
             verify = args.ca_bundle
-        client = KvmClient(args.url, verify=verify)
-        token = args.token or __import__("os").environ.get("KVMCTL_TOKEN")
-        if not token:
-            print(json.dumps({"ok": False, "error": "no token (--token or KVMCTL_TOKEN)"}))
+        client = KvmClient(args.url, verify=verify, host=args.host)
+        env = __import__("os").environ
+        token = args.token or env.get("KVMCTL_TOKEN")
+        user = args.user or env.get("KVMCTL_USER")
+        password = args.password or env.get("KVMCTL_PASSWORD")
+        if token:
+            client.set_token(token)
+        elif user and password:
+            client.login(user, password)
+        else:
+            print(json.dumps({"ok": False, "error": "provide --token/KVMCTL_TOKEN or --user+--password/KVMCTL_USER+KVMCTL_PASSWORD"}))
             return 2
-        client.set_token(token)
 
     surf = SemanticSurface(client, session=SessionState(), host_runner=host_runner)
     surf.write_enabled = args.yes
@@ -122,9 +131,16 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             need_transport("select")
             if args.transport != "kvm":
                 raise SystemExit("'select' requires --transport kvm")
-            out = surf.select(args.machine, verify_policy=args.verify_policy,
-                              rearm=not args.no_rearm, settle_s=args.settle,
-                              sleep=sleep)
+            live_stream = None
+            if client._transport is None and not args.no_rearm:
+                live_stream = client.open_stream()
+            try:
+                out = surf.select(args.machine, verify_policy=args.verify_policy,
+                                  rearm=not args.no_rearm, settle_s=args.settle,
+                                  sleep=sleep)
+            finally:
+                if live_stream is not None:
+                    client.close_stream()
         elif args.command == "hid-reset":
             need_write()
             out = surf.hid_reset()
