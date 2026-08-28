@@ -6,9 +6,13 @@ command and does not accept caller-supplied command arguments.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import queue
 import re
+import threading
 import time
+from dataclasses import dataclass
 from typing import Callable, Protocol, Sequence, cast
 
 from kvmctl.results import operation_result
@@ -20,8 +24,24 @@ class ProbeError(ValueError):
     """Raised when a named probe cannot produce trustworthy evidence."""
 
 
+@dataclass(frozen=True)
+class RunnerResult:
+    return_code: int
+    stdout: str | bytes
+
+
+@dataclass(frozen=True)
+class HostProbeProfile:
+    service_name: str = "kvm-render"
+    drm_node: str = "/dev/dri/renderD128"
+    timeout_seconds: float = 10.0
+
+
+HostProfile = HostProbeProfile
+
+
 class ArgvRunner(Protocol):
-    def __call__(self, argv: Sequence[str]) -> str | bytes | tuple[int, str | bytes]: ...
+    def __call__(self, argv: Sequence[str], *, timeout: float) -> RunnerResult | str | bytes | tuple[int, str | bytes]: ...
 
 
 _HOSTNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
@@ -32,15 +52,49 @@ _PCI = re.compile(
 _PCI_LOOKING = re.compile(r"^[0-9a-fA-F:.]+\s+[^[]+\[[0-9a-fA-F]{4}\]:")
 
 
-def _output(runner: ArgvRunner, argv: tuple[str, ...], limit: int) -> str:
+def _invoke(runner: ArgvRunner, argv: tuple[str, ...], timeout: float) -> RunnerResult:
+    def call():
+        try:
+            accepts_timeout = "timeout" in inspect.signature(runner).parameters
+        except (TypeError, ValueError):
+            accepts_timeout = False
+        return runner(argv, timeout=timeout) if accepts_timeout else runner(argv)  # type: ignore[call-arg]
+
+    result_queue: queue.Queue[object] = queue.Queue(maxsize=1)
+    thread = threading.Thread(target=lambda: _queue_call(call, result_queue), daemon=True)
+    thread.start()
     try:
-        value = runner(argv)
+        value = result_queue.get(timeout=timeout)
+    except queue.Empty as exc:
+        raise ProbeError(f"probe command timed out: {argv[0]}") from exc
+    if isinstance(value, Exception):
+        raise ProbeError(f"probe command failed: {argv[0]}") from value
+    if isinstance(value, RunnerResult):
+        result = value
+    elif isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], int) and not isinstance(value[0], bool):
+        result = RunnerResult(value[0], value[1])
+    else:
+        result = RunnerResult(0, value)  # legacy text runner
+    if not isinstance(result.return_code, int) or isinstance(result.return_code, bool):
+        raise ProbeError("malformed probe output: invalid runner result")
+    return result
+
+
+def _queue_call(call, result_queue: queue.Queue[object]) -> None:
+    try:
+        result_queue.put(call())
     except Exception as exc:
-        raise ProbeError(f"probe command failed: {argv[0]}") from exc
-    if isinstance(value, tuple):
-        if len(value) != 2 or not isinstance(value[0], int) or isinstance(value[0], bool):
-            raise ProbeError("malformed probe output: invalid runner result")
-        value = value[1]
+        result_queue.put(exc)
+
+
+def _output(runner: ArgvRunner, argv: tuple[str, ...], limit: int, timeout: float = 10.0) -> str:
+    try:
+        result = _invoke(runner, argv, timeout)
+        if result.return_code != 0:
+            raise ProbeError(f"probe command failed: {argv[0]}")
+        value = result.stdout
+    except ProbeError:
+        raise
     if isinstance(value, bytes):
         if len(value) > limit:
             raise ProbeError("malformed probe output: output exceeds bound")
@@ -60,9 +114,9 @@ def _output(runner: ArgvRunner, argv: tuple[str, ...], limit: int) -> str:
     return value
 
 
-def _identity(runner: ArgvRunner, limit: int) -> dict:
-    hostname = _output(runner, ("hostname",), limit).strip()
-    release = _output(runner, ("cat", "/etc/os-release"), limit)
+def _identity(runner: ArgvRunner, limit: int, timeout: float = 10.0) -> dict:
+    hostname = _output(runner, ("hostname",), limit, timeout).strip()
+    release = _output(runner, ("cat", "/etc/os-release"), limit, timeout)
     if not _HOSTNAME.fullmatch(hostname):
         raise ProbeError("malformed identity output")
     fields: dict[str, str] = {}
@@ -81,9 +135,9 @@ def _identity(runner: ArgvRunner, limit: int) -> dict:
                    "pretty_name": fields["PRETTY_NAME"]}}
 
 
-def _graphics(runner: ArgvRunner, limit: int) -> dict:
-    pci = _output(runner, ("lspci", "-nnk"), limit)
-    drm = _output(runner, ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"), limit)
+def _graphics(runner: ArgvRunner, limit: int, timeout: float = 10.0) -> dict:
+    pci = _output(runner, ("lspci", "-nnk"), limit, timeout)
+    drm = _output(runner, ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"), limit, timeout)
     devices = []
     current = None
     for line in pci.splitlines():
@@ -99,48 +153,52 @@ def _graphics(runner: ArgvRunner, limit: int) -> dict:
             current = {"address": match.group("address"), "class": cls,
                        "description": match.group("description").strip(), "driver": None}
             devices.append(current)
-        elif current and line.strip().startswith("Kernel driver in use:"):
+        elif current and line.startswith(("\t", " ")) and line.strip().startswith("Kernel driver in use:"):
             driver = line.split(":", 1)[1].strip()
             if not re.fullmatch(r"[A-Za-z0-9_.-]+", driver):
                 raise ProbeError("malformed graphics output")
             current["driver"] = driver
-        elif line.strip() and not line.startswith(("\t", " ")):
-            current = None
+        elif line.strip():
+            if not line.startswith(("\t", " ")):
+                raise ProbeError("malformed graphics output")
+            if not re.match(r"^\s*(?:Subsystem:|Flags:|Kernel modules:|IOMMU group |NUMA node:|Memory at |Capabilities:|Physical Slot:|Rev:|Latency:|Region )", line):
+                raise ProbeError("malformed graphics output")
     nodes = [line.strip() for line in drm.splitlines() if line.strip()]
     if any(not _DRM_NODE.fullmatch(node) for node in nodes):
         raise ProbeError("malformed graphics output")
     return {"probe": "host.graphics.inspect", "devices": devices, "drm_nodes": nodes}
 
 
-def _status(runner: ArgvRunner, argv: tuple[str, ...], limit: int, *, success_codes: set[int], failure_codes: set[int], legacy_values: set[str]) -> bool:
+def _status(runner: ArgvRunner, argv: tuple[str, ...], limit: int, *, timeout: float = 10.0, success_codes: set[int], failure_codes: set[int], legacy_values: set[str]) -> bool:
     try:
-        result = runner(argv)
-    except Exception as exc:
-        raise ProbeError(f"probe command failed: {argv[0]}") from exc
-    if isinstance(result, tuple):
-        if len(result) != 2 or not isinstance(result[0], int) or isinstance(result[0], bool):
+        result = _invoke(runner, argv, timeout)
+    except ProbeError:
+        raise
+    if result.stdout in ("", b""):
+        if result.return_code not in success_codes and result.return_code not in failure_codes:
             raise ProbeError("malformed render access output")
-        output = _output(cast(ArgvRunner, lambda _argv: result[1]), argv, limit)
-        if output.strip():
-            raise ProbeError("malformed render access output")
-        if result[0] not in success_codes and result[0] not in failure_codes:
-            raise ProbeError("malformed render access output")
-        return result[0] in success_codes
-    value = _output(cast(ArgvRunner, lambda _argv: result), argv, limit).strip()
+        return result.return_code in success_codes
+    value = result.stdout
+    if not isinstance(value, (str, bytes)):
+        raise ProbeError("malformed render access output")
+    value = value.decode() if isinstance(value, bytes) else value
+    value = value.strip()
     if value not in legacy_values:
         raise ProbeError("malformed render access output")
     return value in {"active", "readable", "writable"}
 
 
-def _render_access(runner: ArgvRunner, limit: int) -> dict:
-    active = _status(runner, ("systemctl", "is-active", "--quiet", "kvm-render"), limit,
+def _render_access(runner: ArgvRunner, limit: int, profile: HostProbeProfile, timeout: float) -> dict:
+    service = profile.service_name
+    node = profile.drm_node
+    active = _status(runner, ("systemctl", "is-active", "--quiet", service), limit, timeout=timeout,
                      success_codes={0}, failure_codes={3}, legacy_values={"active", "inactive"})
-    readable = _status(runner, ("test", "-r", "/dev/dri/renderD128"), limit,
+    readable = _status(runner, ("test", "-r", node), limit, timeout=timeout,
                        success_codes={0}, failure_codes={1}, legacy_values={"readable", "not-readable"})
-    writable = _status(runner, ("test", "-w", "/dev/dri/renderD128"), limit,
+    writable = _status(runner, ("test", "-w", node), limit, timeout=timeout,
                        success_codes={0}, failure_codes={1}, legacy_values={"writable", "not-writable"})
-    return {"probe": "service.render_access.inspect", "service": "kvm-render",
-            "active": active, "node": "/dev/dri/renderD128",
+    return {"probe": "service.render_access.inspect", "service": service,
+            "active": active, "node": node,
             "readable": readable, "writable": writable}
 
 
@@ -148,12 +206,22 @@ _PROBES = {"host.identity.inspect": _identity, "host.graphics.inspect": _graphic
            "service.render_access.inspect": _render_access}
 
 
-def run_probe(name: str, runner: ArgvRunner, *, max_output_bytes: int = 65536) -> dict:
+def run_probe(name: str, runner: ArgvRunner, *, max_output_bytes: int = 65536,
+              profile: HostProbeProfile | None = None) -> dict:
     if name not in _PROBES:
         raise ProbeError(f"unknown probe: {name}")
     if not isinstance(max_output_bytes, int) or max_output_bytes <= 0:
         raise ProbeError("invalid output bound")
-    return _PROBES[name](runner, max_output_bytes)
+    profile = profile or HostProbeProfile()
+    if not isinstance(profile, HostProbeProfile) or not isinstance(profile.service_name, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]+", profile.service_name):
+        raise ProbeError("invalid host probe profile")
+    if not isinstance(profile.drm_node, str) or not re.fullmatch(r"/dev/dri/(?:card\d+|renderD\d+|controlD\d+)", profile.drm_node):
+        raise ProbeError("invalid host probe profile")
+    if not isinstance(profile.timeout_seconds, (int, float)) or isinstance(profile.timeout_seconds, bool) or profile.timeout_seconds <= 0:
+        raise ProbeError("invalid host probe profile")
+    if name == "service.render_access.inspect":
+        return _render_access(runner, max_output_bytes, profile, float(profile.timeout_seconds))
+    return _PROBES[name](runner, max_output_bytes, float(profile.timeout_seconds))
 
 
 probe = run_probe
@@ -175,10 +243,11 @@ class HostAdapter:
     """Named host operations over an argv-only runner."""
 
     def __init__(self, runner: ArgvRunner, *, max_output_bytes: int = 65536,
-                 journal: Journal | None = None):
+                 journal: Journal | None = None, profile: HostProbeProfile | None = None):
         self.runner = runner
         self.max_output_bytes = max_output_bytes
         self.journal = journal
+        self.profile = profile or HostProbeProfile()
 
     def _checkpoint(self, transition: str, *, target: str,
                     **details: object) -> None:
@@ -198,7 +267,7 @@ class HostAdapter:
 
     def identity(self) -> dict:
         return run_probe("host.identity.inspect", self.runner,
-                         max_output_bytes=self.max_output_bytes)
+                         max_output_bytes=self.max_output_bytes, profile=self.profile)
 
     def _ready_identity(self) -> dict:
         return self.identity()

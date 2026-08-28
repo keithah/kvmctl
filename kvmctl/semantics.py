@@ -24,7 +24,7 @@ from kvmctl.machines import (
     select_machine,
 )
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
-from kvmctl.host import ArgvRunner, HostAdapter, run_probe
+from kvmctl.host import ArgvRunner, HostAdapter, HostProbeProfile, run_probe
 from kvmctl.results import operation_result
 
 
@@ -51,6 +51,7 @@ class SemanticSurface:
         ssh_allowlist: tuple[str, ...] = (),
         ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
         host_runner: Optional[ArgvRunner] = None,
+        host_profile: Optional[HostProbeProfile] = None,
     ):
         self.client = client
         self.session = session or SessionState()
@@ -59,7 +60,7 @@ class SemanticSurface:
             ssh_allowlist=ssh_allowlist,
             ssh_runner=ssh_runner,
         )
-        self.host = HostAdapter(host_runner) if host_runner is not None else None
+        self.host = HostAdapter(host_runner, profile=host_profile) if host_runner is not None else None
 
     # -- policy conveniences -------------------------------------------------
 
@@ -143,7 +144,8 @@ class SemanticSurface:
         if self.host is None:
             raise PolicyError(f"{operation} requires a configured host runner")
         evidence = run_probe(operation, self.host.runner,
-                             max_output_bytes=self.host.max_output_bytes)
+                             max_output_bytes=self.host.max_output_bytes,
+                             profile=self.host.profile)
         return operation_result(operation=operation, transport="host",
                                 read_only=True, state="observed",
                                 evidence=evidence)

@@ -23,6 +23,7 @@ from kvmctl.machines import SessionState
 from kvmctl.operations import TOOL_SPEC
 from kvmctl.policy import PolicyError, TRANSPORTS
 from kvmctl.semantics import SemanticSurface
+from kvmctl.host import HostProbeProfile
 
 _TOOL_NAMES = frozenset(t["name"] for t in TOOL_SPEC)
 
@@ -36,6 +37,7 @@ def _surface(context: dict) -> SemanticSurface:
         ssh_allowlist=tuple(context.get("ssh_allowlist") or ()),
         ssh_runner=context.get("ssh_runner"),
         host_runner=context.get("host_runner"),
+        host_profile=context.get("host_profile"),
     )
 
 

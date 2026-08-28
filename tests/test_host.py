@@ -1,6 +1,6 @@
 import pytest
 
-from kvmctl.host import ProbeError, run_probe
+from kvmctl.host import HostProbeProfile, ProbeError, RunnerResult, run_probe
 
 
 class ScriptedRunner:
@@ -81,3 +81,47 @@ def test_graphics_probe_rejects_malformed_pci_looking_line():
     })
     with pytest.raises(ProbeError, match="malformed"):
         run_probe("host.graphics.inspect", runner)
+
+
+def test_graphics_probe_rejects_unrecognized_nonempty_records():
+    runner = ScriptedRunner({
+        ("lspci", "-nnk"): "00:02.0 VGA compatible controller [0300]: Intel UHD [8086:9a49]\n\tUnexpected record\n",
+        ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"): "card0\n",
+    })
+    with pytest.raises(ProbeError, match="malformed"):
+        run_probe("host.graphics.inspect", runner)
+
+
+def test_render_access_probe_uses_profiled_service_and_node():
+    runner = ScriptedRunner({
+        ("systemctl", "is-active", "--quiet", "custom-render"): RunnerResult(0, ""),
+        ("test", "-r", "/dev/dri/renderD99"): RunnerResult(0, ""),
+        ("test", "-w", "/dev/dri/renderD99"): RunnerResult(1, ""),
+    })
+    profile = HostProbeProfile(service_name="custom-render", drm_node="/dev/dri/renderD99")
+    result = run_probe("service.render_access.inspect", runner, profile=profile)
+    assert result["service"] == "custom-render"
+    assert result["node"] == "/dev/dri/renderD99"
+
+
+def test_probe_passes_timeout_to_typed_runner():
+    calls = []
+
+    def runner(argv, *, timeout):
+        calls.append(timeout)
+        if tuple(argv) == ("hostname",):
+            return RunnerResult(0, "edge-01\n")
+        return RunnerResult(0, 'NAME=Ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu"\n')
+
+    run_probe("host.identity.inspect", runner, profile=HostProbeProfile(timeout_seconds=1.25))
+    assert calls == [1.25, 1.25]
+
+
+def test_probe_times_out_a_stuck_legacy_runner():
+    def runner(argv):
+        import time
+        time.sleep(1)
+        return "edge-01\n"
+
+    with pytest.raises(ProbeError, match="timed out"):
+        run_probe("host.identity.inspect", runner, profile=HostProbeProfile(timeout_seconds=0.01))
