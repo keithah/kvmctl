@@ -81,6 +81,10 @@ class Journal:
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:
+        # Checkpoint identity is controlled by the caller's explicit fields;
+        # details cannot spoof operation/target/transition in the journal.
+        for reserved in ("operation", "target", "transition"):
+            details.pop(reserved, None)
         self.append({"operation": operation, "target": target,
                      "transition": transition, **details})
 

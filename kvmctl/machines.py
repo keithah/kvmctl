@@ -26,6 +26,7 @@ caller without an accompanying state record.
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Protocol, Sequence
@@ -147,6 +148,16 @@ class SelectionRecord:
     @property
     def selected(self) -> bool:
         return self.state in (SelectionState.SELECTED_UNVERIFIED, SelectionState.VERIFIED)
+
+
+_DEVICE_LOCKS: dict[str, threading.Lock] = {}
+_DEVICE_LOCKS_GUARD = threading.Lock()
+
+
+def device_lock(device_id: str = "default") -> threading.Lock:
+    """Return the process-wide mutation lock for one KVM device."""
+    with _DEVICE_LOCKS_GUARD:
+        return _DEVICE_LOCKS.setdefault(device_id, threading.Lock())
 
 
 class SessionState:
