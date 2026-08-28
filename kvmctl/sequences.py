@@ -154,8 +154,29 @@ def _action(raw: Any) -> Action:
     return Action(kind, duration_ms=duration)
 
 
+def _validate_typed_plan(plan: SequencePlan) -> None:
+    if not isinstance(plan.target, str) or not plan.target.strip():
+        raise ValueError("target must be a non-empty string")
+    if not isinstance(plan.actions, tuple) or not plan.actions:
+        raise ValueError("actions must be a non-empty tuple")
+    if len(plan.actions) > SequenceLimits().max_actions:
+        raise ValueError("too many actions")
+    duration = _integer(plan.max_duration_ms, "max_duration_ms")
+    if not 1 <= duration <= SequenceLimits().max_duration_ms:
+        raise ValueError("max_duration_ms must be between 1 and 30000")
+    if not isinstance(plan.unexpected_screen_policy, UnexpectedScreenPolicy):
+        raise ValueError("unsupported unexpected_screen_policy")
+    for action in plan.actions:
+        if not isinstance(action, Action):
+            raise TypeError("each action must be an Action")
+        _action(action.to_mapping())
+
+
 def validate_plan(plan: SequencePlan | Mapping[str, Any]) -> SequencePlan:
-    return plan if isinstance(plan, SequencePlan) else SequencePlan.from_mapping(plan)
+    if isinstance(plan, SequencePlan):
+        _validate_typed_plan(plan)
+        return plan
+    return SequencePlan.from_mapping(plan)
 
 
 def canonicalize_plan(plan: SequencePlan | Mapping[str, Any]) -> dict[str, Any]:

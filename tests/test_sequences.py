@@ -87,3 +87,27 @@ def test_validate_plan_accepts_plan_or_mapping_and_defaults_limits():
         "target": "pve2",
         "unexpected_screen_policy": "abort",
     }
+
+
+INVALID_TYPED_PLANS = [
+    SequencePlan("pve2", (Action("wait", duration_ms=30001),)),
+    SequencePlan("pve2", (Action("hold_key", key="A", duration_ms=5001),)),
+    SequencePlan("pve2", (Action("mouse_move_pct", x_pct=101, y_pct=0),)),
+    SequencePlan("pve2", (Action("text", value="x", duration_ms=1),)),
+    SequencePlan("pve2", (Action("bogus"),)),
+    SequencePlan("pve2", ("not an action",)),
+    SequencePlan("pve2", (), max_duration_ms=0),
+    SequencePlan("pve2", (Action("release_all"),) * 11),
+]
+
+
+@pytest.mark.parametrize("plan", INVALID_TYPED_PLANS)
+def test_canonicalization_rejects_invalid_typed_plans(plan):
+    with pytest.raises((TypeError, ValueError)):
+        canonicalize_plan(plan)
+
+
+@pytest.mark.parametrize("plan", INVALID_TYPED_PLANS)
+def test_plan_hash_rejects_invalid_typed_plans(plan):
+    with pytest.raises((TypeError, ValueError)):
+        plan_hash(plan)
