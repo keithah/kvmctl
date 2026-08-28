@@ -92,6 +92,20 @@ def test_graphics_probe_rejects_unrecognized_nonempty_records():
         run_probe("host.graphics.inspect", runner)
 
 
+def test_graphics_probe_accepts_non_graphics_pci_records():
+    runner = ScriptedRunner({
+        ("lspci", "-nnk"): (
+            "00:01.0 Audio device [0403]: Example Audio [1234:5678]\n"
+            "00:02.0 VGA compatible controller [0300]: Intel UHD [8086:9a49]\n"
+            "\tKernel driver in use: i915\n"
+        ),
+        ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"): "card0\n",
+    })
+    result = run_probe("host.graphics.inspect", runner)
+    assert len(result["devices"]) == 1
+    assert result["devices"][0]["driver"] == "i915"
+
+
 def test_render_access_probe_uses_profiled_service_and_node():
     runner = ScriptedRunner({
         ("systemctl", "is-active", "--quiet", "custom-render"): RunnerResult(0, ""),
