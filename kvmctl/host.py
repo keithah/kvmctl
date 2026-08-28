@@ -6,7 +6,7 @@ command and does not accept caller-supplied command arguments.
 from __future__ import annotations
 
 import re
-from typing import Callable, Protocol, Sequence
+from typing import Callable, Protocol, Sequence, cast
 
 
 class ProbeError(ValueError):
@@ -14,7 +14,7 @@ class ProbeError(ValueError):
 
 
 class ArgvRunner(Protocol):
-    def __call__(self, argv: Sequence[str]) -> str | bytes: ...
+    def __call__(self, argv: Sequence[str]) -> str | bytes | tuple[int, str | bytes]: ...
 
 
 _HOSTNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
@@ -22,6 +22,7 @@ _DRM_NODE = re.compile(r"^(?:card\d+|renderD\d+|controlD\d+)$")
 _PCI = re.compile(
     r"^(?P<address>[0-9a-fA-F:.]+) (?P<class>[^\[]+) \[[0-9a-fA-F]{4}\]: (?P<description>.+?) \[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]$"
 )
+_PCI_LOOKING = re.compile(r"^[0-9a-fA-F:.]+\s+[^[]+\[[0-9a-fA-F]{4}\]:")
 
 
 def _output(runner: ArgvRunner, argv: tuple[str, ...], limit: int) -> str:
@@ -29,6 +30,10 @@ def _output(runner: ArgvRunner, argv: tuple[str, ...], limit: int) -> str:
         value = runner(argv)
     except Exception as exc:
         raise ProbeError(f"probe command failed: {argv[0]}") from exc
+    if isinstance(value, tuple):
+        if len(value) != 2 or not isinstance(value[0], int) or isinstance(value[0], bool):
+            raise ProbeError("malformed probe output: invalid runner result")
+        value = value[1]
     if isinstance(value, bytes):
         if len(value) > limit:
             raise ProbeError("malformed probe output: output exceeds bound")
@@ -75,7 +80,10 @@ def _graphics(runner: ArgvRunner, limit: int) -> dict:
     devices = []
     current = None
     for line in pci.splitlines():
-        match = _PCI.fullmatch(line.strip())
+        stripped = line.strip()
+        if _PCI_LOOKING.match(stripped) and not _PCI.fullmatch(stripped):
+            raise ProbeError("malformed graphics output")
+        match = _PCI.fullmatch(stripped)
         if match:
             cls = match.group("class").strip()
             if cls not in {"VGA compatible controller", "3D controller", "Display controller"}:
@@ -97,15 +105,36 @@ def _graphics(runner: ArgvRunner, limit: int) -> dict:
     return {"probe": "host.graphics.inspect", "devices": devices, "drm_nodes": nodes}
 
 
-def _render_access(runner: ArgvRunner, limit: int) -> dict:
-    active = _output(runner, ("systemctl", "is-active", "--quiet", "kvm-render"), limit).strip()
-    readable = _output(runner, ("test", "-r", "/dev/dri/renderD128"), limit).strip()
-    writable = _output(runner, ("test", "-w", "/dev/dri/renderD128"), limit).strip()
-    if active not in {"active", "inactive"} or readable not in {"readable", "not-readable"} or writable not in {"writable", "not-writable"}:
+def _status(runner: ArgvRunner, argv: tuple[str, ...], limit: int, *, success_codes: set[int], failure_codes: set[int], legacy_values: set[str]) -> bool:
+    try:
+        result = runner(argv)
+    except Exception as exc:
+        raise ProbeError(f"probe command failed: {argv[0]}") from exc
+    if isinstance(result, tuple):
+        if len(result) != 2 or not isinstance(result[0], int) or isinstance(result[0], bool):
+            raise ProbeError("malformed render access output")
+        output = _output(cast(ArgvRunner, lambda _argv: result[1]), argv, limit)
+        if output.strip():
+            raise ProbeError("malformed render access output")
+        if result[0] not in success_codes and result[0] not in failure_codes:
+            raise ProbeError("malformed render access output")
+        return result[0] in success_codes
+    value = _output(cast(ArgvRunner, lambda _argv: result), argv, limit).strip()
+    if value not in legacy_values:
         raise ProbeError("malformed render access output")
+    return value in {"active", "readable", "writable"}
+
+
+def _render_access(runner: ArgvRunner, limit: int) -> dict:
+    active = _status(runner, ("systemctl", "is-active", "--quiet", "kvm-render"), limit,
+                     success_codes={0}, failure_codes={3}, legacy_values={"active", "inactive"})
+    readable = _status(runner, ("test", "-r", "/dev/dri/renderD128"), limit,
+                       success_codes={0}, failure_codes={1}, legacy_values={"readable", "not-readable"})
+    writable = _status(runner, ("test", "-w", "/dev/dri/renderD128"), limit,
+                       success_codes={0}, failure_codes={1}, legacy_values={"writable", "not-writable"})
     return {"probe": "service.render_access.inspect", "service": "kvm-render",
-            "active": active == "active", "node": "/dev/dri/renderD128",
-            "readable": readable == "readable", "writable": writable == "writable"}
+            "active": active, "node": "/dev/dri/renderD128",
+            "readable": readable, "writable": writable}
 
 
 _PROBES = {"host.identity.inspect": _identity, "host.graphics.inspect": _graphics,

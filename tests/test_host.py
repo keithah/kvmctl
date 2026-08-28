@@ -32,13 +32,23 @@ def test_graphics_probe_parses_pci_drivers_and_drm_nodes():
     assert run_probe("host.graphics.inspect", runner) == {"probe": "host.graphics.inspect", "devices": [{"address": "00:02.0", "class": "VGA compatible controller", "description": "Intel Corporation UHD", "driver": "i915"}], "drm_nodes": ["card0", "renderD128"]}
 
 
-def test_render_access_probe_parses_service_state_and_access():
+def test_render_access_probe_uses_status_codes_for_quiet_commands():
     runner = ScriptedRunner({
-        ("systemctl", "is-active", "--quiet", "kvm-render"): "active\n",
-        ("test", "-r", "/dev/dri/renderD128"): "readable\n",
-        ("test", "-w", "/dev/dri/renderD128"): "not-writable\n",
+        ("systemctl", "is-active", "--quiet", "kvm-render"): (0, ""),
+        ("test", "-r", "/dev/dri/renderD128"): (0, ""),
+        ("test", "-w", "/dev/dri/renderD128"): (1, ""),
     })
     assert run_probe("service.render_access.inspect", runner) == {"probe": "service.render_access.inspect", "service": "kvm-render", "active": True, "node": "/dev/dri/renderD128", "readable": True, "writable": False}
+
+
+def test_render_access_probe_rejects_unexpected_status_codes():
+    runner = ScriptedRunner({
+        ("systemctl", "is-active", "--quiet", "kvm-render"): (2, ""),
+        ("test", "-r", "/dev/dri/renderD128"): (0, ""),
+        ("test", "-w", "/dev/dri/renderD128"): (1, ""),
+    })
+    with pytest.raises(ProbeError, match="malformed"):
+        run_probe("service.render_access.inspect", runner)
 
 
 def test_unknown_probe_and_malformed_output_fail_closed():
@@ -58,6 +68,15 @@ def test_probe_rejects_unbounded_output_and_sensitive_values():
 def test_graphics_probe_rejects_malformed_device_and_sensitive_text():
     runner = ScriptedRunner({
         ("lspci", "-nnk"): "not a pci record\n\tKernel driver in use: password=secret\n",
+        ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"): "card0\n",
+    })
+    with pytest.raises(ProbeError, match="malformed"):
+        run_probe("host.graphics.inspect", runner)
+
+
+def test_graphics_probe_rejects_malformed_pci_looking_line():
+    runner = ScriptedRunner({
+        ("lspci", "-nnk"): "00:02.0 VGA compatible controller [0300]: Intel Corporation UHD [8086]\n",
         ("find", "/dev/dri", "-maxdepth", "1", "-type", "c", "-printf", "%f\\n"): "card0\n",
     })
     with pytest.raises(ProbeError, match="malformed"):
