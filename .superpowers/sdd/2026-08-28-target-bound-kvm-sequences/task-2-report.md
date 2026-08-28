@@ -18,7 +18,7 @@ No semantic, MCP, CLI, transport, journal, or executor modules were modified.
 
 ## Commit
 
-- Commit: `047dc9fb7516a96589920a16a69935129ee37284`
+- Commit: `17054fd0fc660290a5121b5143b499800b7ffb66`
 - Message: `feat: add immutable named KVM workflows`
 
 ## TDD evidence and exact commands/output
