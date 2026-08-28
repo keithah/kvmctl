@@ -13,6 +13,7 @@ from typing import Callable, Protocol, Sequence, cast
 
 from kvmctl.results import operation_result
 from kvmctl.policy import PolicyError
+from kvmctl.journal import Journal
 
 
 class ProbeError(ValueError):
@@ -173,9 +174,27 @@ class HostRebootError(RuntimeError):
 class HostAdapter:
     """Named host operations over an argv-only runner."""
 
-    def __init__(self, runner: ArgvRunner, *, max_output_bytes: int = 65536):
+    def __init__(self, runner: ArgvRunner, *, max_output_bytes: int = 65536,
+                 journal: Journal | None = None):
         self.runner = runner
         self.max_output_bytes = max_output_bytes
+        self.journal = journal
+
+    def _checkpoint(self, transition: str, *, target: str,
+                    **details: object) -> None:
+        if self.journal is None:
+            return
+        try:
+            record = {"operation": "host.reboot", "target": target,
+                      "transition": transition, **details}
+            checkpoint = getattr(self.journal, "checkpoint", None)
+            if checkpoint is not None:
+                checkpoint(**record)
+            else:
+                self.journal.append(record)
+        except Exception:
+            # Observability must never change the authorized operation's result.
+            return
 
     def identity(self) -> dict:
         return run_probe("host.identity.inspect", self.runner,
@@ -194,6 +213,8 @@ class HostAdapter:
         if not isinstance(attempts, int) or attempts < 1:
             raise ValueError("attempts must be a positive integer")
         preflight = self.identity()
+        self._checkpoint("preflight", target=target,
+                         hostname=preflight.get("hostname"))
         if preflight.get("hostname") != target:
             return operation_result(operation="host.reboot", target=target,
                                     transport="host", read_only=False, ok=False,
@@ -204,18 +225,22 @@ class HostAdapter:
         try:
             result = self.runner(("systemctl", "reboot"))
         except Exception:
+            self._checkpoint("reboot_failed", target=target)
             return operation_result(operation="host.reboot", target=target,
                                     transport="host", read_only=False, ok=False,
                                     evidence={"preflight": {"hostname": target}},
                                     error={"code": "host_reboot_failed", "retryable": True,
                                            "requires_human": False})
         if isinstance(result, tuple) and result and result[0] != 0:
+            self._checkpoint("reboot_failed", target=target,
+                             return_code=result[0])
             return operation_result(operation="host.reboot", target=target,
                                     transport="host", read_only=False, ok=False,
                                     evidence={"preflight": {"hostname": target}},
                                     error={"code": "host_reboot_failed", "retryable": True,
                                            "requires_human": False})
 
+        self._checkpoint("reboot_requested", target=target)
         disappeared = False
         returned = None
         for index in range(attempts):
@@ -226,9 +251,12 @@ class HostAdapter:
             except ProbeError:
                 if not disappeared:
                     disappeared = True
+                    self._checkpoint("disappeared", target=target)
                 continue
             if disappeared:
                 if returned.get("hostname") != target:
+                    self._checkpoint("mismatch", target=target,
+                                     hostname=returned.get("hostname"))
                     return operation_result(
                         operation="host.reboot", target=target, transport="host",
                         read_only=False, ok=False, changed=True, state="mismatch",
@@ -236,11 +264,13 @@ class HostAdapter:
                                   "post_return": {"hostname": returned.get("hostname")}},
                         error={"code": "host_identity_mismatch", "retryable": False,
                                "requires_human": True})
+                self._checkpoint("ready", target=target, hostname=target)
                 return operation_result(
                     operation="host.reboot", target=target, transport="host",
                     read_only=False, ok=True, changed=True, state="ready",
                     evidence={"preflight": {"hostname": target}, "disappeared": True,
                               "post_return": {"hostname": target}})
+        self._checkpoint("timeout", target=target, disappeared=disappeared)
         return operation_result(operation="host.reboot", target=target,
                                 transport="host", read_only=False, ok=False,
                                 changed=disappeared, state="timeout",

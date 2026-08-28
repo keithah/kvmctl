@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
 from kvmctl.host import HostAdapter, reboot_confirmation
+from kvmctl.journal import Journal
 from kvmctl.policy import PolicyError
 
 
@@ -61,6 +64,39 @@ def test_reboot_returns_stable_timeout_code_when_host_never_returns():
                             write_enabled=True, attempts=2, sleep=lambda _: None)
     assert result["ok"] is False
     assert result["error"] == {"code": "host_reboot_timeout", "retryable": True, "requires_human": False}
+
+
+def test_reboot_journals_lifecycle_transitions(tmp_path):
+    runner = RebootRunner(["edge-01\n", OSError, "edge-01\n"])
+    original = runner.__call__
+
+    def call(argv):
+        if tuple(argv) == ("hostname",) and runner.identities and runner.identities[0] is OSError:
+            runner.identities.pop(0)
+            raise OSError("gone")
+        return original(argv)
+
+    adapter = HostAdapter(call, journal=Journal(tmp_path / "reboot.jsonl"))
+    result = adapter.reboot("edge-01", reboot_confirmation("edge-01"),
+                            write_enabled=True, attempts=3, sleep=lambda _: None)
+
+    assert result["ok"] is True
+    transitions = [json.loads(line)["transition"] for line in
+                   (tmp_path / "reboot.jsonl").read_text().splitlines()]
+    assert transitions == ["preflight", "reboot_requested", "disappeared", "ready"]
+
+
+def test_reboot_result_survives_journal_write_failure():
+    class BrokenJournal:
+        def append(self, record):
+            raise OSError("journal unavailable")
+
+    runner = RebootRunner(["edge-01\n"])
+    adapter = HostAdapter(runner, journal=BrokenJournal())
+    result = adapter.reboot("edge-01", reboot_confirmation("edge-01"),
+                            write_enabled=True, attempts=1, sleep=lambda _: None)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "host_reboot_timeout"
 
 
 def test_reboot_returns_stable_mismatch_code_and_never_uses_exec_command():
