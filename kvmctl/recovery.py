@@ -1,6 +1,6 @@
-"""Post-switch streamer recovery (TH41-3 resolved recipe, step 3).
+"""Post-switch streamer recovery for a USB-attached HDMI/KVM workflow.
 
-The OTG bounce that re-arms the TH41-3 hotkey engine also kills the
+The OTG bounce that re-arms a switch hotkey engine can also kill the
 ustreamer: the first snapshot attempt after the bounce returns HTTP 503.
 The verified revival recipe is:
 

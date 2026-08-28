@@ -4,7 +4,7 @@ A small, safety-first command-line tool for controlling KVMD-compatible KVM devi
 
 Use `kvmctl` to inspect a device, capture its screen, verify a machine, and—when you explicitly authorize it—select a connected machine or run a limited command.
 
-> **Status:** Experimental and hardware-tested. The client targets KVMD-compatible devices; switch profiles may need adjustment for your hardware.
+> **Status:** Experimental and hardware-tested. The client targets KVMD-compatible devices and generic profile-driven HDMI/KVM switches; profiles may need adjustment for your hardware.
 
 ## What you can do
 
@@ -67,7 +67,7 @@ kvmctl --url https://kvm.example.test --host kvm.example.test \
 
 ## Scenario: select and verify a machine
 
-State-changing operations require two deliberate confirmations: `--yes` and an explicit transport. This example is redacted but matches the live-tested GLKVM/TH41-3 workflow:
+State-changing operations require two deliberate confirmations: `--yes` and an explicit transport. This redacted example shows the generic HDMI/KVM selection workflow:
 
 ```sh
 export KVM_URL='https://<glkvm-address>'
@@ -100,7 +100,7 @@ The command re-arms the USB/OTG gadget when needed, sends the profile's held-key
 }
 ```
 
-The verified TH41-3 recipe is `Right Ctrl` twice, the port digit, then `Enter`; each key is sent sequentially and held briefly. See [`docs/TH41-3.md`](docs/TH41-3.md) and [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) for physical prerequisites and recovery behavior.
+The included four-port HID profile has been tested with a Right Ctrl ×2, port digit, Enter recipe; each key is sent sequentially and held briefly. See [`docs/TH41-3.md`](docs/TH41-3.md) for that tested profile and [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) for operational recovery.
 
 If you omit either safety gate, `kvmctl` refuses to perform the operation. Unknown or disabled machine names never generate HID traffic.
 

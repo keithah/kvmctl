@@ -44,8 +44,8 @@ class SwitchProfile:
     inter_key_delay: float = 0.2  # seconds between discrete events
     settle_delay: float = 1.0  # seconds after the final event
     # When set, each tap holds the key down for this many seconds before
-    # releasing (verified 0.120 s on TH41-3: taps are filtered by its hotkey
-    # detector). None preserves plain down/up taps.
+    # releasing (the tested four-port profile requires 0.120 s because taps
+    # are filtered by its hotkey detector). None preserves plain down/up taps.
     hold_ms: Optional[float] = None
 
     def build_events(self, port: int) -> list[KeyEvent]:
@@ -69,7 +69,7 @@ class SwitchProfile:
         return events
 
 
-# Terived TH41-3: Right Ctrl tapped twice, port digit, Enter (manual grammar).
+# Tested four-port HDMI switch profile: Right Ctrl twice, port digit, Enter.
 TH41_3 = SwitchProfile(
     name="terived-th41-3",
     min_port=1,
@@ -115,7 +115,7 @@ def execute_switch(
     pressed, separated by ``inter_key_delay``. With ``dry_run=True`` nothing is
     sent; only the validated plan is returned.
 
-    If ``profile.hold_ms`` is set (e.g. the TH41-3 resolved recipe, 120 ms),
+    If ``profile.hold_ms`` is set (e.g. the tested held-key recipe, 120 ms),
     each tap holds its key down for that duration before releasing; the
     inter-key gap then separates one full press from the next.
     """
@@ -174,10 +174,10 @@ def describe_plan(events: Sequence[KeyEvent]) -> str:
     return " ".join(repr(e) for e in events)
 
 
-# -- OTG re-arm (TH41-3 resolved recipe step 1) ------------------------------
+# -- OTG re-arm for switches that arm on USB re-enumeration -------------------
 #
-# The TH41-3 hotkey engine arms on USB (re)enumeration. Bouncing the Comet
-# storage gadget (start_cdrom/start_flash true, wait ~8 s, then false, wait
+# Some HDMI switch hotkey engines arm on USB (re)enumeration. Bouncing the
+# KVM storage gadget (start_cdrom/start_flash true, wait ~8 s, then false, wait
 # ~12 s) produces that attach event and must precede the held-key sequence.
 
 OTG_ON_WAIT_S = 8.0

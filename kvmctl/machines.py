@@ -1,4 +1,4 @@
-"""Machine profiles for the TH41-3 rack plus select-with-verification.
+"""Machine profiles for an HDMI/KVM switch plus select-with-verification.
 
 Rack mapping (PROBE_NOTES.md):
     port 1: pve1
@@ -6,7 +6,7 @@ Rack mapping (PROBE_NOTES.md):
     port 3: kodi-build      (Kodi build box, M1 Mac mini)
     port 4: pve3
 
-Selection uses the verified TH41-3 recipe (held keys via KvmClient
+Selection uses the configured switch profile's held-key recipe via KvmClient
 key_down/key_up primitives, NOT execute_switch taps):
 
     1. optional OTG gadget bounce to re-arm the hotkey engine
@@ -290,7 +290,7 @@ REARM_KEYS: Sequence[str] = ("ControlRight", "ControlRight")
 
 def otg_bounce(client: KvmClient, *, on_s: float = 8.0, off_s: float = 12.0,
                sleep: Callable[[float], None] = time.sleep) -> None:
-    """Re-arm the TH41-3 hotkey engine via USB gadget re-enumeration."""
+    """Re-arm a switch hotkey engine via USB gadget re-enumeration."""
     try:
         client._request(
             "POST", "/api/system/otg_functions",

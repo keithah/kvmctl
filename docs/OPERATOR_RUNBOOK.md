@@ -1,17 +1,17 @@
-# kvmctl operator runbook: GLKVM / TH41-3
+# kvmctl operator runbook: GLKVM and HDMI/KVM switches
 
-This runbook covers safe, non-destructive operation of a GLKVM Comet and the TH41-3 HDMI/KVM switch.
+This runbook covers safe, non-destructive operation of a GLKVM and a profile-driven HDMI/KVM switch. The included four-port profile is tested with a Terived TH41-3; the workflow is not limited to that model.
 
 ## Rack map
 
-| TH41-3 port | Target | Address / identity | Status |
+| Switch port | Target | Address / identity | Status |
 |---|---|---|---|
 | 1 | pve1 | `192.168.42.3:8006`, console prompt `pve1 login:` | Live-verified |
 | 2 | pve2 | `192.168.42.4:8006`, console prompt `pve2 login:` | Currently selected and live-verified |
 | 3 | Mac mini Kodi build box | M1 Mac | Mapped; switching visually verified |
 | 4 | pve3 | `192.168.42.5` | Mapped; switching visually verified |
 
-The Comet must be connected to the TH41-3 port marked with the keyboard icon, and the physical Hot key switch must be on (green LED lit).
+For the tested profile, the KVM's USB cable must be connected to the switch's keyboard-marked port and its physical hotkey control must be on. Other switch profiles may have different wiring requirements.
 
 ## Credentials and common variables
 
