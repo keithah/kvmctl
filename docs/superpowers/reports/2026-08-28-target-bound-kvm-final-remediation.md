@@ -111,3 +111,7 @@ exit 0
 ```
 
 Rechecked authorization expiry and sequence deadlines before each HID mutation, bounded blocking waits with fail-closed timeout behavior, replaced predictable staging with exclusive 0600 temporary files plus file/directory fsync and symlink rejection, and moved `kvm_workflow_authorize` into the canonical operation catalog while removing duplicate MCP registry entries. Added advancing-clock, blocking-wait, symlink, staging, and catalog-parity regressions.
+
+## Effective HTTP Host binding remediation (2026-08-28)
+
+Canonicalized endpoint identity now includes scheme, network hostname, effective port, and configured HTTP Host/virtual-host authority. CLI session persistence and sequence authorization binding derive this identity from the constructed client rather than caller-supplied binding fields. Equivalent clients with the same URL and Host can replay persisted state; a different Host is rejected. Invalid or ambiguous Host authorities fail closed. Added same-URL/different-Host rejection and matching-Host persistence regressions.

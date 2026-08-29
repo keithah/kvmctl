@@ -12,7 +12,7 @@ import sys
 import inspect
 from typing import Callable, Optional
 
-from kvmctl.client import KvmClient
+from kvmctl.client import KvmClient, effective_endpoint_identity
 from kvmctl.machines import SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
@@ -200,7 +200,9 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             print(json.dumps({"ok": False, "error": "provide --token/KVMCTL_TOKEN or --user+--password/KVMCTL_USER+KVMCTL_PASSWORD"}))
             return 2
 
-    loaded_session = session or load_session(__import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=args.url)
+    endpoint = effective_endpoint_identity(
+        getattr(client, "base_url", args.url), getattr(client, "host", args.host))
+    loaded_session = session or load_session(__import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=endpoint)
     try:
         workflow_path = args.workflows or __import__('os').environ.get('KVMCTL_WORKFLOWS_FILE')
         repository = WorkflowRepository.from_file(workflow_path) if workflow_path else WorkflowRepository(())
@@ -353,7 +355,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             raise SystemExit(2)
         raise
     if session is None and hasattr(surf, "session"):
-        save_session(surf.session, __import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=args.url)
+        save_session(surf.session, __import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=endpoint)
     rendered = json.dumps(out)
     if getattr(args, "out", None):
         try:

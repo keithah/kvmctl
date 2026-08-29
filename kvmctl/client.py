@@ -10,10 +10,55 @@ import asyncio
 import ssl
 import threading
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
 REDACTED = "***"
+
+
+def effective_endpoint_identity(base_url: str, host: Optional[str] = None) -> str:
+    """Return the canonical identity used to bind sessions and capabilities.
+
+    The HTTP Host header is part of the endpoint identity because several
+    virtual hosts can legitimately share one network URL.
+    """
+    if not isinstance(base_url, str) or not base_url:
+        raise ValueError("endpoint URL is required")
+    parsed = urlsplit(base_url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("endpoint URL must include an http(s) host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("endpoint URL must not contain credentials")
+    try:
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError as exc:
+        raise ValueError("endpoint URL has an invalid port") from exc
+    network_host = parsed.hostname.lower().rstrip(".")
+    if ":" in network_host:
+        network_host = f"[{network_host}]"
+    configured_host = host if host is not None else network_host
+    if not isinstance(configured_host, str) or not configured_host.strip():
+        raise ValueError("HTTP Host identity is required")
+    if configured_host != configured_host.strip() or any(c in configured_host for c in "\r\n,/"):
+        raise ValueError("HTTP Host identity is ambiguous")
+    # Host is an authority, not an arbitrary header value. Normalize DNS
+    # case while retaining an explicitly supplied port.
+    host_parts = configured_host.rsplit(":", 1)
+    if configured_host.startswith("["):
+        close = configured_host.find("]")
+        if close < 0 or (len(configured_host) > close + 1 and configured_host[close + 1] != ":"):
+            raise ValueError("HTTP Host identity is ambiguous")
+        host_identity = configured_host[:close + 1].lower() + configured_host[close + 1:]
+    elif len(host_parts) == 2 and host_parts[1].isdigit():
+        if not 0 < int(host_parts[1]) <= 65535:
+            raise ValueError("HTTP Host identity has an invalid port")
+        host_identity = host_parts[0].lower().rstrip(".") + ":" + host_parts[1]
+    elif ":" in configured_host:
+        raise ValueError("HTTP Host identity is ambiguous")
+    else:
+        host_identity = configured_host.lower().rstrip(".")
+    return f"{parsed.scheme.lower()}://{network_host}:{port}|host={host_identity}"
 
 
 class KvmClient:
@@ -45,6 +90,9 @@ class KvmClient:
         self.host = host
         self._stream = None
         self._held_keys: set[str] = set()
+
+    def endpoint_identity(self) -> str:
+        return effective_endpoint_identity(self.base_url, self.host)
 
     # -- plumbing ---------------------------------------------------------
 

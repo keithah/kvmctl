@@ -2,6 +2,8 @@ import json
 import threading
 from kvmctl.journal import Journal
 from kvmctl.session_store import FileAuthorizationStore
+from kvmctl.session_store import load_session, save_session
+from kvmctl.client import effective_endpoint_identity
 from kvmctl.sequence_executor import SequenceExecutor
 from kvmctl.results import normalize_error, operation_result
 from test_sequence_executor import FakeClient, ready_session
@@ -19,6 +21,35 @@ def test_persisted_authorization_is_bound_to_verified_context_and_single_use(tmp
     assert e2.execute(auth.token).error == 'authorization invalid'
     assert e1.execute(auth.token).ok
     assert e1.execute(auth.token).error == 'authorization used'
+
+
+def test_same_url_different_http_host_rejects_persisted_authorization(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    c1 = FakeClient(); c1.base_url = c2_url = 'https://shared.test:8443/api'; c1.host = 'kvm-a.example'
+    c2 = FakeClient(); c2.base_url = c2_url; c2.host = 'kvm-b.example'
+    e1 = SequenceExecutor(c1, ready_session(), Journal(tmp_path/'j1'), authorization_store=store)
+    auth = e1.authorize(e1.plan({'target':'pve2','actions':[{'type':'release_all'}]}), approved=True)
+    e2 = SequenceExecutor(c2, ready_session(), Journal(tmp_path/'j2'), authorization_store=store)
+    assert e2.execute(auth.token).error == 'authorization invalid'
+    assert e1.execute(auth.token).ok
+
+
+def test_same_url_matching_http_host_accepts_persisted_authorization(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    c1 = FakeClient(); c1.base_url = 'https://shared.test:8443/api'; c1.host = 'kvm.example'
+    c2 = FakeClient(); c2.base_url = c1.base_url; c2.host = 'kvm.example'
+    e1 = SequenceExecutor(c1, ready_session(), Journal(tmp_path/'j1'), authorization_store=store)
+    auth = e1.authorize(e1.plan({'target':'pve2','actions':[{'type':'release_all'}]}), approved=True)
+    e2 = SequenceExecutor(c2, ready_session(), Journal(tmp_path/'j2'), authorization_store=store)
+    assert e2.execute(auth.token).ok
+
+
+def test_session_persistence_binds_effective_http_host(tmp_path):
+    path = str(tmp_path / 'session.json')
+    session = ready_session()
+    save_session(session, path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example'))
+    assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example')).current is not None
+    assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-b.example')).current is None
 
 
 def test_persisted_authorization_take_is_process_safe(tmp_path):

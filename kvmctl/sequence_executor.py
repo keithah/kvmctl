@@ -15,6 +15,7 @@ from .machines import SessionState, device_lock
 from .sequences import SequencePlan, validate_plan, plan_hash
 from .workflows import WorkflowDefinition
 from .results import normalize_error
+from .client import effective_endpoint_identity
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,10 @@ class SequenceExecutor:
 
     @staticmethod
     def _client_identity(client) -> str:
-        for attr in ("base_url", "url", "host"):
+        base_url = getattr(client, "base_url", None)
+        if isinstance(base_url, str) and base_url:
+            return "endpoint:" + effective_endpoint_identity(base_url, getattr(client, "host", None))
+        for attr in ("url", "host"):
             value = getattr(client, attr, None)
             if isinstance(value, str) and value:
                 return f"client:{attr}:{value}"
@@ -126,7 +130,9 @@ class SequenceExecutor:
     def _binding_identity(self) -> str:
         rec = self.session.current
         endpoint = self._client_identity(self.client)
-        material = f"{endpoint}|{rec.machine if rec else ''}|{rec.port if rec else ''}|{rec.detail if rec else ''}|{rec.at if rec else ''}"
+        # Persisted capabilities must survive equivalent verified sessions;
+        # volatile verification detail/timestamps are not endpoint identity.
+        material = f"{endpoint}|{rec.machine if rec else ''}|{rec.port if rec else ''}"
         return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
     def reject(self, reason: str, *, target=None, plan_hash_value="", start=None) -> None:
