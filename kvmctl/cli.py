@@ -95,7 +95,48 @@ def build_parser() -> argparse.ArgumentParser:
 
     ex = sub.add_parser("exec-command")
     ex.add_argument("cmd")
+
+    def plan_command(name, *, write=False):
+        cmd = sub.add_parser(name)
+        cmd.add_argument("--plan", required=True,
+                         help="JSON plan text, path to a JSON file, or - for stdin")
+        cmd.add_argument("--ttl", type=float, default=30.0)
+        cmd.add_argument("--out", default=None, help="also write the result JSON to this path")
+        cmd.add_argument("--approval-token", default=None, help=argparse.SUPPRESS)
+        cmd.set_defaults(sequence_write=write)
+        return cmd
+
+    plan_command("sequence-plan")
+    plan_command("sequence-authorize", write=True)
+    plan_command("sequence-execute", write=True)
+    sub.add_parser("workflow-list")
+    wi = sub.add_parser("workflow-inspect")
+    wi.add_argument("name")
+    wi.add_argument("--revision", default=None)
+    wi.add_argument("--target", default=None)
+    we = sub.add_parser("workflow-execute")
+    we.add_argument("name")
+    we.add_argument("--revision", required=True)
+    we.add_argument("--target", default=None)
+    we.add_argument("--ttl", type=float, default=30.0)
+    we.add_argument("--approval-token", default=None, help=argparse.SUPPRESS)
     return p
+
+
+def _read_plan(source: str):
+    """Read plan JSON without echoing or logging its contents."""
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        try:
+            with open(source, encoding="utf-8") as fh:
+                raw = fh.read()
+        except (OSError, UnicodeError):
+            raw = source
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("plan must be a JSON object")
+    return value
 
 
 def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
@@ -208,17 +249,49 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             need_write()
             need_transport("exec-command")
             out = surf.exec_command(args.cmd, transport=args.transport)
+        elif args.command in {"sequence-plan", "sequence-authorize", "sequence-execute"}:
+            if args.sequence_write:
+                need_write()
+            plan = _read_plan(args.plan)
+            approved = bool(args.yes or args.approval_token)
+            if args.command == "sequence-plan":
+                out = surf.kvm_sequence_plan(plan)
+            elif args.command == "sequence-authorize":
+                out = surf.kvm_sequence_authorize(plan, approved=approved, ttl_s=args.ttl)
+            else:
+                out = surf.kvm_sequence_execute(plan, approved=approved, ttl_s=args.ttl)
+        elif args.command == "workflow-list":
+            out = surf.kvm_workflow_list()
+        elif args.command == "workflow-inspect":
+            out = surf.kvm_workflow_inspect(args.name, args.revision, args.target)
+        elif args.command == "workflow-execute":
+            need_write()
+            out = surf.kvm_workflow_execute(
+                args.name, args.revision, approved=bool(args.yes or args.approval_token),
+                target=args.target, ttl_s=args.ttl)
         else:  # pragma: no cover
             raise SystemExit(f"unknown command {args.command!r}")
     except PolicyError as exc:
         print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
         return 3
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                             "workflow-list", "workflow-inspect", "workflow-execute"}:
+            print(json.dumps({"operation": args.command.replace("-", "_"),
+                              "ok": False, "error": str(exc)[:300]}))
+            return 1
+        raise
     except SystemExit as exc:
         if isinstance(exc.code, str):
             print(exc.code, file=sys.stderr)
             raise SystemExit(2)
         raise
-    print(json.dumps(out))
+    rendered = json.dumps(out)
+    if getattr(args, "out", None):
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(rendered)
+            fh.write("\n")
+    print(rendered)
     return 0 if out.get("ok", True) else 1
 
 
