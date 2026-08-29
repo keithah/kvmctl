@@ -25,3 +25,9 @@ Verification:
 - `.venv/bin/python -m pytest tests -q` — `315 passed, 3 skipped`
 
 The pre-existing suite has legacy MCP calls that submit raw plans with `approved=true`; those are intentionally rejected by the new token-bound execution contract and require migration to authorize-then-token-execute.
+
+## MCP workflow authorization strict-input remediation (2026-08-29)
+
+The direct MCP dispatcher now requires non-empty workflow name and revision strings, exact boolean approval, non-empty optional targets, and finite integral TTL values within the 30-second authorization policy. It no longer coerces approval or TTL values, and missing approval is rejected before reaching the semantic authorization gate. Added regressions for string approval, missing/null and malformed fields, fractional/non-finite TTLs, and valid explicit authorization.
+
+Verification: `tests/test_sequence_mcp.py` — `30 passed`; full suite — `336 passed, 3 skipped`; compileall and `git diff --check` — exit 0.

@@ -26,6 +26,7 @@ from kvmctl.machines import SessionState
 from kvmctl.operations import TOOL_SPEC as _BASE_TOOL_SPEC
 from kvmctl.policy import PolicyError, TRANSPORTS
 from kvmctl.semantics import SemanticSurface
+from kvmctl.sequence_executor import SequenceExecutor
 from kvmctl.host import HostProbeProfile
 from kvmctl.results import normalize_error, operation_result
 
@@ -121,6 +122,23 @@ def _validate_sequence_arguments(name: str, arguments: dict) -> None:
         for field in ("revision", "target"):
             if field in arguments and arguments[field] is not None and not isinstance(arguments[field], str):
                 raise TypeError(f"invalid argument {field}: expected string")
+    if name == "kvm_workflow_authorize":
+        for field in ("name", "revision"):
+            value = arguments.get(field)
+            if not isinstance(value, str) or not value:
+                raise TypeError(f"invalid argument {field}: expected non-empty string")
+        if "target" in arguments:
+            target = arguments["target"]
+            if target is not None and (not isinstance(target, str) or not target):
+                raise TypeError("invalid argument target: expected non-empty string or null")
+        if "approved" not in arguments or type(arguments["approved"]) is not bool:
+            raise TypeError("invalid argument approved: expected boolean")
+        if "ttl_s" in arguments:
+            ttl = arguments["ttl_s"]
+            if (isinstance(ttl, bool) or not isinstance(ttl, (int, float))
+                    or not math.isfinite(ttl) or not float(ttl).is_integer()
+                    or not 0 < ttl <= SequenceExecutor.MAX_AUTHORIZATION_TTL_S):
+                raise TypeError("invalid argument ttl_s: expected integral finite number in authorization limit")
     if name == "kvm_workflow_execute":
         for field in ("name", "revision"):
             if not isinstance(arguments.get(field), str):
@@ -161,7 +179,10 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                     _decode_plan(arguments) if ("plan" in arguments or "plan_b64" in arguments or "target" in arguments or "actions" in arguments) else None,
                     approval_token=arguments.get("approval_token"))
             elif name == "kvm_workflow_authorize":
-                out = surf.kvm_workflow_authorize(arguments["name"], arguments["revision"], approved=bool(arguments.get("approved", False)), target=arguments.get("target"), ttl_s=float(arguments.get("ttl_s", 30.0)))
+                out = surf.kvm_workflow_authorize(
+                    arguments["name"], arguments["revision"],
+                    approved=arguments["approved"], target=arguments.get("target"),
+                    ttl_s=arguments.get("ttl_s", 30.0))
             elif name == "kvm_workflow_list":
                 out = surf.kvm_workflow_list()
             elif name == "kvm_workflow_inspect":

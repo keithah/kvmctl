@@ -144,3 +144,51 @@ def test_dispatch_propagates_target_mismatch_and_revision_mismatch(tmp_path):
     assert "target mismatch" in mismatch["error"]["code"]
     bad_revision = call("kvm_workflow_execute", {"name": "safe", "revision": "sha256:bad", "approved": True, "target": "pve2"}, ctx)
     assert "workflow revision mismatch" in bad_revision["error"]["code"]
+
+
+def test_workflow_authorize_requires_actual_boolean_approval(tmp_path):
+    workflow = {"name": "safe", "target": "pve2", "steps": [{"type": "wait", "duration_ms": 1}]}
+    _, ctx = client_and_context(tmp_path, write_enabled=True, workflows=[workflow])
+    listed = call("kvm_workflow_list", {}, ctx)
+    revision = listed["evidence"]["workflows"][0]["revision"]
+
+    rejected = call("kvm_workflow_authorize", {
+        "name": "safe", "revision": revision, "approved": "false",
+        "target": "pve2", "ttl_s": 30,
+    }, ctx)
+
+    assert rejected["ok"] is False
+    assert "invalid argument" in rejected["error"]["code"]
+
+
+@pytest.mark.parametrize("arguments,field", [
+    ({"name": "", "revision": "r", "approved": True, "target": "pve2", "ttl_s": 30}, "name"),
+    ({"name": "safe", "revision": "", "approved": True, "target": "pve2", "ttl_s": 30}, "revision"),
+    ({"name": "safe", "revision": "r", "target": "pve2", "ttl_s": 30}, "approved"),
+    ({"name": "safe", "revision": "r", "approved": None, "target": "pve2", "ttl_s": 30}, "approved"),
+    ({"name": "safe", "revision": "r", "approved": True, "target": 7, "ttl_s": 30}, "target"),
+    ({"name": "safe", "revision": "r", "approved": True, "target": "pve2", "ttl_s": "30"}, "ttl_s"),
+    ({"name": "safe", "revision": "r", "approved": True, "target": "pve2", "ttl_s": 1.5}, "ttl_s"),
+    ({"name": "safe", "revision": "r", "approved": True, "target": "pve2", "ttl_s": float("inf")}, "ttl_s"),
+])
+def test_workflow_authorize_rejects_malformed_strict_inputs(tmp_path, arguments, field):
+    _, ctx = client_and_context(tmp_path, write_enabled=True)
+    rejected = call("kvm_workflow_authorize", arguments, ctx)
+
+    assert rejected["ok"] is False
+    assert "invalid argument" in rejected["error"]["code"]
+
+
+def test_workflow_authorize_accepts_valid_explicit_inputs(tmp_path):
+    workflow = {"name": "safe", "target": "pve2", "steps": [{"type": "wait", "duration_ms": 1}]}
+    _, ctx = client_and_context(tmp_path, write_enabled=True, workflows=[workflow])
+    listed = call("kvm_workflow_list", {}, ctx)
+    revision = listed["evidence"]["workflows"][0]["revision"]
+
+    authorized = call("kvm_workflow_authorize", {
+        "name": "safe", "revision": revision, "approved": True,
+        "target": "pve2", "ttl_s": 30,
+    }, ctx)
+
+    assert authorized["ok"] is True
+    assert authorized["evidence"]["approval_token"]
