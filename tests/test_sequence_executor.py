@@ -113,6 +113,23 @@ def test_changed_hash_and_authorization_target_are_rejected(tmp_path):
         SequenceAuthorization(planned.plan, "pve1", planned.plan_hash, 30)
 
 
+def test_execute_rejects_authorization_target_mismatch_and_journals_abort(tmp_path):
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "text", "value": "must-not-run"}]})
+    authorization = ex.authorize(planned, approved=True)
+    object.__setattr__(authorization, "target", "pve1")
+
+    result = ex.execute(authorization)
+
+    assert not result.ok
+    assert result.error == "authorization target mismatch"
+    assert ex.client.calls == [("release_all",)]
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["target"] == "pve1"
+    assert records[-1]["reason"] == "authorization target mismatch"
+
+
 def test_lock_conflict_is_journaled_and_deadline_checked_after_last_action(tmp_path):
     client = FakeClient()
     ex = make_executor(tmp_path, client)
@@ -122,6 +139,9 @@ def test_lock_conflict_is_journaled_and_deadline_checked_after_last_action(tmp_p
     try:
         result = ex.execute(ex.authorize(ex.plan({"target":"pve2", "actions":[{"type":"release_all"}]}), approved=True))
         assert result.error == "device lock conflict"
+        records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+        assert records[-1]["transition"] == "aborted"
+        assert records[-1]["reason"] == "device lock conflict"
     finally:
         lock.release()
     ticks = iter([0.0, 0.0, 0.0, 0.002, 0.002])

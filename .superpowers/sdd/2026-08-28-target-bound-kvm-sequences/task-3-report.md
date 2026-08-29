@@ -32,6 +32,14 @@
 - Full repository suite could not collect because the worktree environment lacks the `mcp` package; the Task 3-focused suite passes.
 - Stream cleanup is controlled by the constructor's `stream_owned=True` flag; the executor does not open streams implicitly.
 
+## Task 3 review fix round 3
+- Added a true `execute()` boundary test that mutates authorization target away from the plan/session target and asserts execution aborts without dispatching the plan action, with an `aborted` journal record.
+- Added explicit `aborted` journal transition and reason assertions to the device-lock conflict test.
+
+### Fix-round 3 verification (exact outputs)
+- `.venv/bin/python -m pytest tests/test_sequence_executor.py::test_execute_rejects_authorization_target_mismatch_and_journals_abort tests/test_sequence_executor.py::test_lock_conflict_is_journaled_and_deadline_checked_after_last_action -q` → `2 passed in 0.03s`; exit 0.
+- `.venv/bin/python -m pytest tests/test_sequence_executor.py tests/test_journal.py tests/test_machines.py -q && git diff --check` → `35 passed in 20.44s`; diff check clean; exit 0.
+
 ## Task 3 review fix round 1
 - Enforced `authorization.plan.target == authorization.target` at authorization construction and again at the execution boundary; changed plan hashes are rejected at execution.
 - Made cancellation and all `BaseException` cleanup paths safe: `release_all`, `close_stream`, and lock release are attempted independently, with cleanup failures forcing `ok == False`.
