@@ -29,8 +29,8 @@ from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
 from kvmctl.host import ArgvRunner, HostAdapter, HostProbeProfile, run_probe
 from kvmctl.results import operation_result
 from kvmctl.journal import Journal
-from kvmctl.sequences import validate_plan
-from kvmctl.sequence_executor import SequenceExecutor
+from kvmctl.sequences import validate_plan, plan_hash
+from kvmctl.sequence_executor import SequenceExecutor, SequencePlanRecord
 from kvmctl.workflows import WorkflowRepository, list_workflows, inspect_workflow, resolve_workflow
 
 
@@ -344,10 +344,27 @@ class SemanticSurface:
 
     @staticmethod
     def _sequence_envelope(operation: str, *, read_only: bool, target=None,
-                           ok=True, state="planned", **evidence) -> dict:
+                           ok=True, state="planned", error=None, **evidence) -> dict:
         return operation_result(operation=operation, transport="kvm",
                                 read_only=read_only, target=target, ok=ok,
-                                state=state, evidence=evidence)
+                                state=state, evidence=evidence, error=error)
+
+    def _validated_sequence_record(self, plan) -> SequencePlanRecord:
+        """Accept only canonical records produced by the executor planner."""
+        if not isinstance(plan, SequencePlanRecord):
+            if isinstance(plan, dict):
+                return self.sequence_executor.plan(validate_plan(plan))
+            raise TypeError("authorization requires a validated sequence plan record")
+        canonical = validate_plan(plan.plan)
+        if (plan.target != canonical.target
+                or plan.plan_hash != plan_hash(canonical)
+                or plan.action_count != len(canonical.actions)
+                or plan.max_duration_ms != canonical.max_duration_ms):
+            raise ValueError("invalid sequence plan record")
+        current = self.session.current
+        if current is None or not current.verified or current.machine != canonical.target:
+            raise ValueError("target mismatch or session not verified")
+        return plan
 
     def kvm_sequence_plan(self, plan) -> dict:
         planned = self.sequence_executor.plan(validate_plan(plan))
@@ -359,7 +376,7 @@ class SemanticSurface:
     def kvm_sequence_authorize(self, plan, *, approved: bool,
                                ttl_s: float = 30.0) -> dict:
         self.policy.require_write("kvm_sequence_authorize")
-        planned = plan if hasattr(plan, "plan_hash") else self.sequence_executor.plan(validate_plan(plan))
+        planned = self._validated_sequence_record(plan)
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
         return self._sequence_envelope(
             "kvm_sequence_authorize", read_only=False, target=authorization.target,
@@ -369,7 +386,7 @@ class SemanticSurface:
     def kvm_sequence_execute(self, plan, *, approved: bool = False,
                              ttl_s: float = 30.0) -> dict:
         self.policy.require_write("kvm_sequence_execute")
-        planned = plan if hasattr(plan, "plan_hash") else self.sequence_executor.plan(validate_plan(plan))
+        planned = self._validated_sequence_record(plan)
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
         result = self.sequence_executor.execute(authorization)
         return self._sequence_envelope(

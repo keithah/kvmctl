@@ -6,7 +6,8 @@ import pytest
 from kvmctl.machines import RACK, SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
-from kvmctl.sequences import plan_hash
+from kvmctl.sequences import plan_hash, validate_plan
+from kvmctl.sequence_executor import SequencePlanRecord
 from kvmctl.workflows import WorkflowRepository
 
 
@@ -21,7 +22,8 @@ class FakeExecutor:
 
     def plan(self, plan, *, workflow_revision=None):
         self.plans.append((plan, workflow_revision))
-        return type("Record", (), {"plan": plan, "target": plan.target, "plan_hash": plan_hash(plan), "action_count": len(plan.actions), "max_duration_ms": plan.max_duration_ms, "workflow_revision": workflow_revision})()
+        return SequencePlanRecord(plan, plan.target, plan_hash(plan), len(plan.actions), plan.max_duration_ms,
+                                  workflow_revision=workflow_revision)
 
     def authorize(self, planned, *, approved, ttl_s=30.0):
         self.authorizations.append((planned, approved, ttl_s))
@@ -94,3 +96,39 @@ def test_workflow_list_and_inspect_are_read_only():
     assert listed["read_only"] and inspected["read_only"]
     assert listed["evidence"]["workflows"][0]["name"] == "hello"
     assert inspected["evidence"]["workflow"]["name"] == "hello"
+
+
+def test_execution_error_is_top_level_and_redacted():
+    class FailingExecutor(FakeExecutor):
+        def execute(self, authorization):
+            return type("Result", (), {"ok": False, "cleanup_ok": True, "target": authorization.target,
+                                        "plan_hash": authorization.plan_hash, "elapsed_ms": 4,
+                                        "completed_steps": 0, "error": "secret backend detail",
+                                        "cleanup_errors": ()})()
+
+    result = surface(write_enabled=True, executor=FailingExecutor()).kvm_sequence_execute(PLAN, approved=True)
+    assert result["error"] == {"code": "secret backend detail", "retryable": False, "requires_human": False}
+    assert "error" not in result["evidence"]
+
+
+def test_read_only_catalog_entries_explicitly_disable_write_gate():
+    from kvmctl.operations import TOOL_SPEC
+
+    entries = {entry["name"]: entry for entry in TOOL_SPEC}
+    for name in ("kvm_sequence_plan", "kvm_workflow_list", "kvm_workflow_inspect"):
+        assert entries[name]["write_gate"] is False
+
+
+def test_authorize_rejects_forged_or_mismatched_plan_records():
+    executor = FakeExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+    surf.kvm_sequence_plan(PLAN)
+    record = executor.plan(validate_plan(PLAN))
+
+    with pytest.raises(TypeError):
+        surf.kvm_sequence_authorize(type("Forged", (), {"plan_hash": record.plan_hash})(), approved=True)
+
+    forged = SequencePlanRecord(record.plan, "other-target", record.plan_hash, record.action_count,
+                                record.max_duration_ms)
+    with pytest.raises(ValueError):
+        surf.kvm_sequence_authorize(forged, approved=True)
