@@ -64,7 +64,7 @@ _SEQUENCE_TOOLS = frozenset({"kvm_sequence_plan", "kvm_sequence_authorize",
 # direct callers do not receive argument validation from the transport.
 _PLAN_FIELDS = frozenset({"plan", "plan_b64", "target", "actions",
                           "max_duration_ms", "unexpected_screen_policy"})
-_SEQUENCE_FIELDS = _PLAN_FIELDS | {"approved", "ttl_s"}
+_SEQUENCE_FIELDS = _PLAN_FIELDS | {"approved", "ttl_s", "approval_token"}
 _WORKFLOW_SCHEMAS = {
     "kvm_sequence_plan": _PLAN_FIELDS,
     "kvm_sequence_authorize": _SEQUENCE_FIELDS,
@@ -114,6 +114,8 @@ def _validate_sequence_arguments(name: str, arguments: dict) -> None:
             ttl = arguments["ttl_s"]
             if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
                 raise TypeError("invalid argument ttl_s: expected finite number")
+        if "approval_token" in arguments and not isinstance(arguments["approval_token"], str):
+            raise TypeError("invalid argument approval_token: expected string")
     if name == "kvm_workflow_inspect":
         if not isinstance(arguments.get("name"), str):
             raise TypeError("invalid argument name: expected string")
@@ -132,6 +134,8 @@ def _validate_sequence_arguments(name: str, arguments: dict) -> None:
             ttl = arguments["ttl_s"]
             if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
                 raise TypeError("invalid argument ttl_s: expected finite number")
+        if "approval_token" in arguments and not isinstance(arguments["approval_token"], str):
+            raise TypeError("invalid argument approval_token: expected string")
 
 
 def dispatch_tool(name: str, arguments: Optional[dict], *,
@@ -154,8 +158,8 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                 out = surf.kvm_sequence_authorize(_decode_plan(arguments),
                     approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
             elif name == "kvm_sequence_execute":
-                out = surf.kvm_sequence_execute(_decode_plan(arguments),
-                    approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
+                out = surf.kvm_sequence_execute(
+                    approval_token=arguments.get("approval_token"))
             elif name == "kvm_workflow_list":
                 out = surf.kvm_workflow_list()
             elif name == "kvm_workflow_inspect":

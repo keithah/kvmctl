@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def plan_command(name, *, write=False):
         cmd = sub.add_parser(name)
-        cmd.add_argument("--plan", required=True,
+        cmd.add_argument("--plan", required=name != "sequence-execute",
                          help="JSON plan text, path to a JSON file, or - for stdin")
         cmd.add_argument("--ttl", type=float, default=30.0)
         cmd.add_argument("--out", default=None, help="also write the result JSON to this path")
@@ -270,14 +270,14 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         elif args.command in {"sequence-plan", "sequence-authorize", "sequence-execute"}:
             if args.sequence_write:
                 need_write()
-            plan = _read_plan(args.plan)
+            plan = _read_plan(args.plan) if args.plan else None
             approved = bool(args.yes or args.approval_token)
             if args.command == "sequence-plan":
                 out = surf.kvm_sequence_plan(plan)
             elif args.command == "sequence-authorize":
                 out = surf.kvm_sequence_authorize(plan, approved=approved, ttl_s=args.ttl)
             else:
-                out = surf.kvm_sequence_execute(plan, approved=approved, ttl_s=args.ttl)
+                out = surf.kvm_sequence_execute(approval_token=args.approval_token)
         elif args.command == "workflow-list":
             out = surf.kvm_workflow_list()
         elif args.command == "workflow-inspect":

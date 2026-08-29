@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import secrets
 import time
 from typing import Callable, Optional
 
@@ -29,6 +30,8 @@ class SequenceAuthorization:
     plan_hash: str
     expires_at: float
     workflow_revision: str | None = None
+    token: str = ""
+    session_id: int = 0
 
     def __post_init__(self) -> None:
         if self.plan.target != self.target:
@@ -53,6 +56,8 @@ def _failure_reason(exc: BaseException, *, phase: str = "action") -> str:
         return "cancelled"
     if isinstance(exc, TimeoutError):
         return "deadline exceeded"
+    if isinstance(exc, RuntimeError) and str(exc) in {"screen assertion failed", "screen assertion unavailable"}:
+        return str(exc)
     return f"{phase} failed"
 
 
@@ -76,6 +81,8 @@ class SequenceExecutor:
         # making unrelated client instances contend on one process-global key.
         self.device_id = device_id if device_id is not None else self._client_identity(client)
         self.stream_owned = stream_owned
+        self._authorizations: dict[str, SequenceAuthorization] = {}
+        self._used_authorizations: set[str] = set()
         self._dispatch_table = {
             "key": self._dispatch_key,
             "text": self._dispatch_text,
@@ -86,6 +93,7 @@ class SequenceExecutor:
             "mouse_click": self._dispatch_mouse_click,
             "mouse_scroll": self._dispatch_mouse_scroll,
             "wait": self._dispatch_wait,
+            "assert_screen": self._dispatch_assert_screen,
         }
 
     @staticmethod
@@ -97,12 +105,16 @@ class SequenceExecutor:
         return f"client:{id(client)}"
 
     def _checkpoint(self, transition: str, *, target: str | None, plan_hash: str, **details) -> None:
+        current = self.session.current
+        details.setdefault("target_verification", bool(current and current.verified and current.machine == target))
+        details.setdefault("timestamp", time.time())
         self.journal.checkpoint(operation="sequence", target=target, transition=transition,
                                 plan_hash=plan_hash, **details)
 
     def _abort_preflight(self, authorization: SequenceAuthorization, reason: str) -> None:
         self._checkpoint("aborted", target=authorization.target,
-                         plan_hash=authorization.plan_hash, reason=reason)
+                         plan_hash=authorization.plan_hash, reason=reason,
+                         final_result="failure", ended_at=time.time(), duration_ms=0)
 
     def _abort(self, *, target: str | None, reason: str,
                plan_hash_value: str | None = None) -> None:
@@ -146,13 +158,27 @@ class SequenceExecutor:
             raise ValueError("authorization ttl must be positive")
         now = self.clock()
         auth = SequenceAuthorization(planned.plan, planned.target, planned.plan_hash,
-                                     now + ttl_s, planned.workflow_revision)
+                                     now + ttl_s, planned.workflow_revision,
+                                     token=secrets.token_urlsafe(32), session_id=id(self.session))
+        self._authorizations[auth.token] = auth
         self._checkpoint("authorized", target=auth.target, plan_hash=auth.plan_hash,
                          expires_at=auth.expires_at, workflow_revision=auth.workflow_revision)
         return auth
 
-    def execute(self, authorization: SequenceAuthorization) -> SequenceExecutionResult:
+    def execute(self, authorization: SequenceAuthorization | str) -> SequenceExecutionResult:
         start = self.clock()
+        if isinstance(authorization, str):
+            authorization = self._authorizations.get(authorization)
+        if not isinstance(authorization, SequenceAuthorization) or not authorization.token:
+            return SequenceExecutionResult(False, True, "", "", error="authorization missing")
+        registered = self._authorizations.get(authorization.token)
+        if registered is not authorization or authorization.session_id != id(self.session):
+            return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                           error="authorization invalid")
+        if authorization.token in self._used_authorizations:
+            return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                           error="authorization used")
+        self._used_authorizations.add(authorization.token)
         result = SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash)
         lock = device_lock(self.device_id)
         if not lock.acquire(blocking=False):
@@ -196,7 +222,10 @@ class SequenceExecutor:
                 raise TimeoutError
             result.ok = True
             self._checkpoint("completed", target=authorization.target,
-                             plan_hash=authorization.plan_hash, steps=result.completed_steps)
+                             plan_hash=authorization.plan_hash, steps=result.completed_steps,
+                             started_at=start, ended_at=self.clock(),
+                             duration_ms=max(0, int((self.clock() - start) * 1000)),
+                             final_result="success")
         except BaseException as exc:
             result.error = _failure_reason(exc)
             self._abort_preflight(authorization, result.error)
@@ -265,6 +294,17 @@ class SequenceExecutor:
 
     def _dispatch_mouse_scroll(self, action) -> None: self.client.mouse_scroll(action.dx, action.dy)
     def _dispatch_wait(self, action) -> None: self.sleep(action.duration_ms / 1000)
+
+    def _dispatch_assert_screen(self, action) -> None:
+        snapshot = getattr(self.client, "snapshot_jpeg", None)
+        ocr = getattr(self.client, "ocr", None)
+        if snapshot is None or ocr is None:
+            raise RuntimeError("screen assertion unavailable")
+        text = ocr(snapshot())
+        if not isinstance(text, str) or action.contains not in text:
+            self._checkpoint("screen_assertion_failed", target=self.session.current.machine if self.session.current else None,
+                             plan_hash="", evidence="mismatch")
+            raise RuntimeError("screen assertion failed")
 
     def execute_workflow(self, workflow: WorkflowDefinition, *, approved: bool,
                          target: Optional[str] = None, ttl_s: float = 30.0) -> SequenceExecutionResult:

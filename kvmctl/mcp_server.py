@@ -164,8 +164,8 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
         return call("kvm_sequence_authorize", {"plan": plan, "approved": approved, "ttl_s": ttl_s})
 
     @server.tool(name="kvm_sequence_execute", description="Execute an approved target-bound KVM sequence.")
-    def kvm_sequence_execute(plan: dict[str, Any], approved: bool = False, ttl_s: float = 30.0) -> dict[str, Any]:
-        return call("kvm_sequence_execute", {"plan": plan, "approved": approved, "ttl_s": ttl_s})
+    def kvm_sequence_execute(approval_token: str) -> dict[str, Any]:
+        return call("kvm_sequence_execute", {"approval_token": approval_token})
 
     @server.tool(name="kvm_workflow_list", description="List redacted named KVM workflows.")
     def kvm_workflow_list() -> dict[str, Any]:

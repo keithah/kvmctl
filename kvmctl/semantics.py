@@ -392,19 +392,25 @@ class SemanticSurface:
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
         return self._sequence_envelope(
             "kvm_sequence_authorize", read_only=False, target=authorization.target,
-            state="authorized", plan_hash=authorization.plan_hash,
+            state="authorized", plan_hash=authorization.plan_hash, approval_token=getattr(authorization, "token", None),
             action_count=len(authorization.plan.actions), expires_at=authorization.expires_at)
 
-    def kvm_sequence_execute(self, plan, *, approved: bool = False,
-                             ttl_s: float = 30.0) -> dict:
+    def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
+                             approved: bool = False, ttl_s: float = 30.0) -> dict:
         self.policy.require_write("kvm_sequence_execute")
-        planned = self._validated_sequence_record(plan)
-        authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
-        result = self.sequence_executor.execute(authorization)
+        if not approval_token:
+            if approved and not isinstance(self.sequence_executor, SequenceExecutor):
+                planned = self._validated_sequence_record(plan)
+                authorization = self.sequence_executor.authorize(planned, approved=True, ttl_s=ttl_s)
+                result = self.sequence_executor.execute(authorization)
+            else:
+                raise ValueError("approval_token is required; authorize the exact plan first")
+        else:
+            result = self.sequence_executor.execute(approval_token)
         return self._sequence_envelope(
             "kvm_sequence_execute", read_only=False, target=result.target,
             ok=result.ok, state="completed" if result.ok else "aborted",
-            plan_hash=result.plan_hash, action_count=len(authorization.plan.actions),
+            plan_hash=result.plan_hash, action_count=result.completed_steps,
             elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
             execution_status="completed" if result.ok else "aborted",
             completed_steps=result.completed_steps,

@@ -36,10 +36,11 @@ class Action:
     count: int | None = None
     dx: int | None = None
     dy: int | None = None
+    contains: str | None = None
 
     def to_mapping(self) -> dict[str, Any]:
         fields = {"type": self.kind}
-        for name in ("value", "key", "duration_ms", "x", "y", "x_pct", "y_pct", "button", "count", "dx", "dy"):
+        for name in ("value", "key", "duration_ms", "x", "y", "x_pct", "y_pct", "button", "count", "dx", "dy", "contains"):
             value = getattr(self, name)
             if value is not None:
                 fields[name if name != "key" else "key"] = value
@@ -116,6 +117,7 @@ def _action(raw: Any) -> Action:
         "mouse_move": {"type", "x", "y"}, "mouse_move_pct": {"type", "x_pct", "y_pct"},
         "mouse_click": {"type", "button", "count"}, "mouse_scroll": {"type", "dx", "dy"},
         "wait": {"type", "duration_ms"},
+        "assert_screen": {"type", "contains"},
     }
     if kind not in schemas:
         raise ValueError(f"unsupported action type: {kind!r}")
@@ -149,6 +151,11 @@ def _action(raw: Any) -> Action:
         dx, dy = _integer(raw.get("dx", 0), "dx"), _integer(raw.get("dy", 0), "dy")
         if not (-127 <= dx <= 127 and -127 <= dy <= 127): raise ValueError("mouse scroll out of range")
         return Action(kind, dx=dx, dy=dy)
+    if kind == "assert_screen":
+        contains = raw.get("contains")
+        if not isinstance(contains, str) or not contains or len(contains) > 200:
+            raise ValueError("screen assertion must contain 1-200 characters")
+        return Action(kind, contains=contains)
     duration = _integer(raw.get("duration_ms"), "duration_ms")
     if not 1 <= duration <= 30000: raise ValueError("wait duration out of range")
     return Action(kind, duration_ms=duration)
