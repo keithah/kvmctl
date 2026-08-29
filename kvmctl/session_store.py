@@ -162,6 +162,16 @@ class FileAuthorizationStore:
         _atomic_write(self.path, json.dumps(env, sort_keys=True))
 
     def put(self, auth):
+        try:
+            payload = {"token": auth.token, "target": auth.target, "plan": auth.plan.to_mapping(),
+                       "plan_hash": auth.plan_hash, "expires_at": auth.expires_at,
+                       "workflow_revision": auth.workflow_revision, "binding": auth.binding,
+                       "session_id": auth.session_id, "used": False}
+            # Validate the complete candidate before touching either the key or
+            # the existing capability bytes.
+            self._validate_record(payload)
+        except (AttributeError, TypeError, ValueError, KeyError) as exc:
+            raise ValueError("invalid authorization") from exc
         with self._locked():
             if not self.keypath.exists():
                 try:
@@ -169,10 +179,6 @@ class FileAuthorizationStore:
                 except FileExistsError:
                     pass
             _secure_file(self.keypath)
-            payload = {"token": auth.token, "target": auth.target, "plan": auth.plan.to_mapping(),
-                       "plan_hash": auth.plan_hash, "expires_at": auth.expires_at,
-                       "workflow_revision": auth.workflow_revision, "binding": auth.binding,
-                       "session_id": auth.session_id, "used": False}
             records = [p for p in self._records() if p.get("token") != auth.token]
             records.append(payload)
             self._write_records(records)

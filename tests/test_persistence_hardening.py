@@ -102,7 +102,9 @@ def test_mac_valid_schema_corruption_is_not_consumed_or_rewritten(tmp_path, fiel
 def test_mac_valid_distant_expiry_is_not_consumed_or_rewritten(tmp_path):
     path = tmp_path / "auth"
     store = FileAuthorizationStore(str(path), clock=lambda: 100.0, max_ttl_s=30.0)
-    store.put(auth("keep"))
+    initial = auth("keep")
+    object.__setattr__(initial, "expires_at", 110.0)
+    store.put(initial)
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=131.0))
     original = path.read_bytes()
     assert store.take("keep", binding="b") is None
@@ -119,3 +121,28 @@ def test_tampered_store_fails_closed_and_does_not_overwrite(tmp_path):
     with __import__("pytest").raises(AuthorizationStoreIntegrityError):
         s.put(auth("new"))
     assert b"new" not in path.read_bytes()
+
+
+def test_put_rejects_malformed_capability_without_modifying_store(tmp_path):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path))
+    store.put(auth("keep"))
+    original = path.read_bytes()
+    bad = auth("bad")
+    object.__setattr__(bad, "plan_hash", "sha256:wrong")
+    with pytest.raises(ValueError):
+        store.put(bad)
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("expiry", [float("nan"), float("inf"), float("-inf"), 1000.0])
+def test_put_rejects_invalid_expiry_without_modifying_store(tmp_path, expiry):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path), max_ttl_s=30.0)
+    store.put(auth("keep"))
+    original = path.read_bytes()
+    bad = auth("bad")
+    object.__setattr__(bad, "expires_at", expiry)
+    with pytest.raises(ValueError):
+        store.put(bad)
+    assert path.read_bytes() == original

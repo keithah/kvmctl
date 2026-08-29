@@ -103,8 +103,11 @@ def _number(value: Any, label: str) -> int | float:
 
 
 def _integer(value: Any, label: str) -> int:
-    n = _number(value, label)
-    return int(n)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be an integer")
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        raise ValueError(f"{label} must be an integer")
+    return int(value)
 
 
 def _action(raw: Any) -> Action:

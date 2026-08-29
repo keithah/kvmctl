@@ -61,7 +61,7 @@ def test_requires_one_nonempty_target():
 def test_action_values_are_normalized_to_immutable_typed_actions():
     plan = SequencePlan.from_mapping({
         "target": "pve2", "actions": [
-            {"type": "hold_key", "key": "ctrl", "duration_ms": 25.9},
+            {"type": "hold_key", "key": "ctrl", "duration_ms": 25.0},
             {"type": "mouse_move", "x": 10.0, "y": 20},
             {"type": "mouse_click", "button": "left", "count": 2.0},
             {"type": "mouse_scroll", "dx": -1.0, "dy": 3.0},

@@ -88,6 +88,17 @@ def test_authorize_rejects_nonfinite_and_overlong_ttl(tmp_path, ttl):
         ex.authorize(planned, approved=True, ttl_s=ttl)
 
 
+@pytest.mark.parametrize("plan", [
+    {"target": "pve2", "max_duration_ms": 1.5, "actions": [{"type": "release_all"}]},
+    {"target": "pve2", "actions": [{"type": "hold_key", "key": "Enter", "duration_ms": 1.5}]},
+    {"target": "pve2", "actions": [{"type": "mouse_move", "x": 1.5, "y": 2}]},
+    {"target": "pve2", "actions": [{"type": "mouse_click", "button": "left", "count": 1.5}]},
+])
+def test_fractional_integer_fields_are_rejected(tmp_path, plan):
+    with pytest.raises(ValueError):
+        SequencePlan.from_mapping(plan)
+
+
 def test_stops_after_action_failure_and_cleanup_failure_is_unsuccessful(tmp_path):
     client = FakeClient(); client.fail_on = "text"
     ex = make_executor(tmp_path, client)
@@ -337,3 +348,42 @@ def test_timed_out_injected_waits_use_one_bounded_worker(tmp_path):
     assert entered.is_set()
     assert all(("text", "never") not in client.calls for client in clients)
     assert sum(t.name.startswith("kvmctl-wait") for t in threading.enumerate()) <= 1
+
+
+def test_action_failure_survives_journal_failure(tmp_path):
+    class BrokenJournal:
+        calls = 0
+        def checkpoint(self, **_):
+            self.calls += 1
+            if self.calls > 4:
+                raise OSError("journal secret")
+
+    client = FakeClient(); client.fail_on = "text"
+    ex = SequenceExecutor(client, ready_session(), BrokenJournal(),
+                          clock=lambda: 0.0, sleep=lambda _: None)
+    plan = ex.plan({"target": "pve2", "actions": [{"type": "text", "value": "x"}]})
+    auth = ex.authorize(plan, approved=True)
+    result = ex.execute(auth)
+    assert result.error == "operation failed"
+    assert "journal" not in result.error
+
+
+def test_preflight_failure_survives_journal_failure(tmp_path):
+    class BrokenJournal:
+        calls = 0
+        def checkpoint(self, **_):
+            self.calls += 1
+            if self.calls > 2:
+                raise OSError("journal secret")
+
+    ex = SequenceExecutor(FakeClient(), ready_session(), BrokenJournal(),
+                          clock=lambda: 0.0, sleep=lambda _: None,
+                          device_id="journal-preflight")
+    lock = __import__("kvmctl.machines", fromlist=["device_lock"]).device_lock(ex.device_id)
+    assert lock.acquire(blocking=False)
+    try:
+        plan = ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]})
+        result = ex.execute(ex.authorize(plan, approved=True))
+    finally:
+        lock.release()
+    assert result.error == "device lock conflict"

@@ -83,7 +83,7 @@ def test_dispatch_rejects_invalid_action_data_without_raise(tmp_path):
     invalid = {"target": "pve2", "actions": [{"type": "wait", "duration_ms": "1"}]}
     out = call("kvm_sequence_plan", {"plan": invalid}, ctx)
     assert out["ok"] is False
-    assert "duration_ms must be finite numeric" in out["error"]["code"]
+    assert out["error"]["code"] == "invalid input"
 
 
 def test_workflow_tools_list_and_inspect_redact_secret(tmp_path):

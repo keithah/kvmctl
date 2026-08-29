@@ -160,8 +160,15 @@ class SequenceExecutor:
         self.journal.checkpoint(operation="sequence", target=target, transition=transition,
                                 plan_hash=plan_hash, **details)
 
+    def _best_effort_checkpoint(self, transition: str, *, target: str | None,
+                                plan_hash: str, **details) -> None:
+        try:
+            self._checkpoint(transition, target=target, plan_hash=plan_hash, **details)
+        except BaseException:
+            pass
+
     def _abort_preflight(self, authorization: SequenceAuthorization, reason: str) -> None:
-        self._checkpoint("aborted", target=authorization.target,
+        self._best_effort_checkpoint("aborted", target=authorization.target,
                          plan_hash=authorization.plan_hash, reason=reason,
                          target_verification=(authorization.plan.target == authorization.target),
                          final_result="failure", started_at=time.time(), ended_at=time.time(), duration_ms=0)
@@ -170,7 +177,7 @@ class SequenceExecutor:
                plan_hash_value: str | None = None) -> None:
         details = {"reason": reason, "final_result": "failure",
                    "ended_at": time.time(), "duration_ms": 0}
-        self._checkpoint("aborted", target=target, plan_hash=plan_hash_value or "", **details)
+        self._best_effort_checkpoint("aborted", target=target, plan_hash=plan_hash_value or "", **details)
 
     def plan(self, plan: SequencePlan, *, workflow_revision: str | None = None) -> SequencePlanRecord:
         target = getattr(plan, "target", None)
@@ -360,8 +367,8 @@ class SequenceExecutor:
             result.cleanup_ok = not cleanup_errors
             if cleanup_errors:
                 result.ok = False
-                self._checkpoint("cleanup_failed", target=authorization.target,
-                                 plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
+                self._best_effort_checkpoint("cleanup_failed", target=authorization.target,
+                                             plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
             result.elapsed_ms = max(0, int((self.clock() - start) * 1000))
             try:
                 lock.release()
@@ -483,8 +490,8 @@ class SequenceExecutor:
         if not isinstance(text, str) or len(text) > self.SCREEN_MAX_TEXT:
             raise RuntimeError("screen assertion unavailable")
         if action.contains not in text:
-            self._checkpoint("screen_assertion_failed", target=self._active_target,
-                             plan_hash=self._active_plan_hash, evidence="mismatch")
+            self._best_effort_checkpoint("screen_assertion_failed", target=self._active_target,
+                                         plan_hash=self._active_plan_hash, evidence="mismatch")
             raise RuntimeError("screen assertion failed")
 
     def execute_workflow(self, workflow: WorkflowDefinition, *, approval_token: str | None = None,

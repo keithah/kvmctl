@@ -151,3 +151,9 @@ exit 0
 git diff --check:
 exit 0
 ```
+
+## Strict input and rejection-integrity remediation (2026-08-29)
+
+`SequenceExecutor` now treats aborted, cleanup-failure, and screen-mismatch journal checkpoints as best-effort evidence, preserving the original structured execution/preflight result and redacting exception details. Integer-valued sequence fields reject fractional numbers and booleans instead of truncating. `FileAuthorizationStore.put()` validates the complete canonical capability schema, bindings, plan hash, and finite TTL before creating or rewriting persistence state; invalid capabilities leave existing bytes unchanged. Added regression coverage for journal failures, strict integer fields, malformed capabilities, and invalid expiries.
+
+Focused remediation tests: 76 passed
