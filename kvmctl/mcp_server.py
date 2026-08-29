@@ -11,6 +11,8 @@ from mcp.types import ImageContent
 from kvmctl.config import Settings, client_from_settings, settings_from_env
 from kvmctl.mcp_surface import dispatch_tool
 from kvmctl.semantics import SemanticSurface
+from kvmctl.workflows import WorkflowRepository
+from kvmctl.machines import SessionState
 
 
 def client_from_env(*, return_settings: bool = False):
@@ -20,7 +22,8 @@ def client_from_env(*, return_settings: bool = False):
 
 
 def build_mcp_server(*, client=None, settings: Settings | None = None,
-                     host_runner=None) -> FastMCP:
+                     host_runner=None, workflow_repository=None,
+                     sequence_executor=None, journal=None) -> FastMCP:
     if client is None:
         client, loaded = client_from_env(return_settings=True)
         settings = settings or loaded
@@ -29,7 +32,7 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
         "Safe KVMD semantic operations. Read-only by default; writes require "
         "KVMCTL_WRITE_ENABLED and remain subject to operation policy."
     ))
-    session = None
+    session = SessionState()
 
     def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         raw = dispatch_tool(name, arguments, context={
@@ -39,6 +42,9 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
             "ssh_allowlist": settings.ssh_allowlist,
             "sleep": time.sleep,
             "host_runner": host_runner,
+            "workflow_repository": workflow_repository or WorkflowRepository(()),
+            "sequence_executor": sequence_executor,
+            "journal": journal,
         })
         return json.loads(raw)
 
@@ -148,6 +154,32 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
                     delay: float = 1.0) -> dict[str, Any]:
         return call("host.reboot", {"target": target, "confirmation": confirmation,
                                      "attempts": attempts, "delay": delay})
+
+    @server.tool(name="kvm_sequence_plan", description="Validate and plan a target-bound KVM action sequence.")
+    def kvm_sequence_plan(plan: dict[str, Any] | None = None, plan_b64: str | None = None) -> dict[str, Any]:
+        return call("kvm_sequence_plan", {"plan": plan} if plan is not None else {"plan_b64": plan_b64})
+
+    @server.tool(name="kvm_sequence_authorize", description="Authorize a planned target-bound KVM sequence.")
+    def kvm_sequence_authorize(plan: dict[str, Any], approved: bool = False, ttl_s: float = 30.0) -> dict[str, Any]:
+        return call("kvm_sequence_authorize", {"plan": plan, "approved": approved, "ttl_s": ttl_s})
+
+    @server.tool(name="kvm_sequence_execute", description="Execute an approved target-bound KVM sequence.")
+    def kvm_sequence_execute(plan: dict[str, Any], approved: bool = False, ttl_s: float = 30.0) -> dict[str, Any]:
+        return call("kvm_sequence_execute", {"plan": plan, "approved": approved, "ttl_s": ttl_s})
+
+    @server.tool(name="kvm_workflow_list", description="List redacted named KVM workflows.")
+    def kvm_workflow_list() -> dict[str, Any]:
+        return call("kvm_workflow_list", {})
+
+    @server.tool(name="kvm_workflow_inspect", description="Inspect a redacted named KVM workflow.")
+    def kvm_workflow_inspect(name: str, revision: str | None = None, target: str | None = None) -> dict[str, Any]:
+        return call("kvm_workflow_inspect", {"name": name, "revision": revision, "target": target})
+
+    @server.tool(name="kvm_workflow_execute", description="Execute an approved named KVM workflow.")
+    def kvm_workflow_execute(name: str, revision: str, approved: bool = False,
+                             target: str | None = None, ttl_s: float = 30.0) -> dict[str, Any]:
+        return call("kvm_workflow_execute", {"name": name, "revision": revision,
+                                             "approved": approved, "target": target, "ttl_s": ttl_s})
 
     return server
 

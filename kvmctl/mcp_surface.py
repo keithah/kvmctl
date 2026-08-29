@@ -16,15 +16,25 @@ Context dict keys:
 from __future__ import annotations
 
 import json
+import base64
 from typing import Optional
 
 from kvmctl.client import KvmClient
 from kvmctl.machines import SessionState
-from kvmctl.operations import TOOL_SPEC
+from kvmctl.operations import TOOL_SPEC as _BASE_TOOL_SPEC
 from kvmctl.policy import PolicyError, TRANSPORTS
 from kvmctl.semantics import SemanticSurface
 from kvmctl.host import HostProbeProfile
+from kvmctl.results import operation_result
 
+TOOL_SPEC = list(_BASE_TOOL_SPEC) + [
+    {"name": "kvm_sequence_plan", "read_only": True},
+    {"name": "kvm_sequence_authorize", "write_gate": True},
+    {"name": "kvm_sequence_execute", "write_gate": True},
+    {"name": "kvm_workflow_list", "read_only": True},
+    {"name": "kvm_workflow_inspect", "read_only": True},
+    {"name": "kvm_workflow_execute", "write_gate": True},
+]
 _TOOL_NAMES = frozenset(t["name"] for t in TOOL_SPEC)
 
 
@@ -38,7 +48,37 @@ def _surface(context: dict) -> SemanticSurface:
         ssh_runner=context.get("ssh_runner"),
         host_runner=context.get("host_runner"),
         host_profile=context.get("host_profile"),
+        workflow_repository=context.get("workflow_repository"),
+        sequence_executor=context.get("sequence_executor"),
+        journal=context.get("journal"),
     )
+
+
+_SEQUENCE_TOOLS = frozenset({"kvm_sequence_plan", "kvm_sequence_authorize",
+                             "kvm_sequence_execute", "kvm_workflow_list",
+                             "kvm_workflow_inspect", "kvm_workflow_execute"})
+
+
+def _sequence_error(name: str, exc: BaseException) -> str:
+    return json.dumps(operation_result(operation=name, transport="kvm",
+        read_only=name in {"kvm_sequence_plan", "kvm_workflow_list", "kvm_workflow_inspect"},
+        ok=False, state="aborted", error={"code": str(exc)[:300]}))
+
+
+def _decode_plan(arguments: dict) -> object:
+    if "plan" in arguments:
+        return arguments["plan"]
+    # The dispatcher also accepts an inline plan as the argument object.
+    if "target" in arguments or "actions" in arguments:
+        return arguments
+    encoded = arguments.get("plan_b64")
+    if encoded is None:
+        raise ValueError("plan is required")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid base64 plan") from exc
 
 
 def dispatch_tool(name: str, arguments: Optional[dict], *,
@@ -51,6 +91,30 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
     surf = _surface(context)
     sleep = context.get("sleep")
     try:
+        if name in _SEQUENCE_TOOLS:
+            if name == "kvm_sequence_plan":
+                out = surf.kvm_sequence_plan(_decode_plan(arguments))
+            elif name == "kvm_sequence_authorize":
+                out = surf.kvm_sequence_authorize(_decode_plan(arguments),
+                    approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
+            elif name == "kvm_sequence_execute":
+                out = surf.kvm_sequence_execute(_decode_plan(arguments),
+                    approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
+            elif name == "kvm_workflow_list":
+                out = surf.kvm_workflow_list()
+            elif name == "kvm_workflow_inspect":
+                inspect_target = arguments.get("target")
+                if inspect_target is None and arguments.get("revision") is not None:
+                    for definition in surf.workflow_repository.list():
+                        if definition.name == arguments.get("name") and not definition.target_independent:
+                            inspect_target = definition.target
+                            break
+                out = surf.kvm_workflow_inspect(arguments["name"], arguments.get("revision"), inspect_target)
+            else:
+                out = surf.kvm_workflow_execute(arguments["name"], arguments["revision"],
+                    approved=bool(arguments.get("approved", False)), target=arguments.get("target"),
+                    ttl_s=float(arguments.get("ttl_s", 30.0)))
+            return json.dumps(out)
         if name == "capabilities":
             out = surf.capabilities()
         elif name == "snapshot":
@@ -148,6 +212,8 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
             raise AssertionError(name)
     except Exception as exc:
         # Policy refusals and device errors become structured payloads, never raises.
+        if name in _SEQUENCE_TOOLS:
+            return _sequence_error(name, exc)
         out = {"operation": name, "ok": False, "error": str(exc)[:300]}
     return json.dumps(out)
 
