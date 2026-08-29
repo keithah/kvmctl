@@ -351,20 +351,32 @@ class SemanticSurface:
 
     def _validated_sequence_record(self, plan) -> SequencePlanRecord:
         """Accept only canonical records produced by the executor planner."""
+        expected = None
         if not isinstance(plan, SequencePlanRecord):
             if isinstance(plan, dict):
-                return self.sequence_executor.plan(validate_plan(plan))
-            raise TypeError("authorization requires a validated sequence plan record")
-        canonical = validate_plan(plan.plan)
-        if (plan.target != canonical.target
-                or plan.plan_hash != plan_hash(canonical)
-                or plan.action_count != len(canonical.actions)
-                or plan.max_duration_ms != canonical.max_duration_ms):
+                expected = validate_plan(plan)
+                planned = self.sequence_executor.plan(expected)
+                if not isinstance(planned, SequencePlanRecord):
+                    raise TypeError("invalid sequence plan record")
+            else:
+                raise TypeError("authorization requires a validated sequence plan record")
+        else:
+            planned = plan
+        try:
+            canonical = validate_plan(planned.plan)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise TypeError("invalid sequence plan record") from exc
+        if expected is not None and canonical != expected:
+            raise ValueError("invalid sequence plan record")
+        if (planned.target != canonical.target
+                or planned.plan_hash != plan_hash(canonical)
+                or planned.action_count != len(canonical.actions)
+                or planned.max_duration_ms != canonical.max_duration_ms):
             raise ValueError("invalid sequence plan record")
         current = self.session.current
         if current is None or not current.verified or current.machine != canonical.target:
             raise ValueError("target mismatch or session not verified")
-        return plan
+        return planned
 
     def kvm_sequence_plan(self, plan) -> dict:
         planned = self.sequence_executor.plan(validate_plan(plan))

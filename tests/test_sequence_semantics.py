@@ -132,3 +132,32 @@ def test_authorize_rejects_forged_or_mismatched_plan_records():
                                 record.max_duration_ms)
     with pytest.raises(ValueError):
         surf.kvm_sequence_authorize(forged, approved=True)
+
+
+def test_authorize_rejects_malformed_raw_record_from_executor():
+    class MalformedExecutor(FakeExecutor):
+        def plan(self, plan, *, workflow_revision=None):
+            return {"plan": plan, "target": plan.target}
+
+    executor = MalformedExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+
+    with pytest.raises(TypeError, match="invalid sequence plan record"):
+        surf.kvm_sequence_authorize(PLAN, approved=True)
+    assert executor.authorizations == []
+
+
+def test_authorize_rejects_mismatched_raw_record_from_executor():
+    class MismatchedExecutor(FakeExecutor):
+        def plan(self, plan, *, workflow_revision=None):
+            record = super().plan(plan, workflow_revision=workflow_revision)
+            return SequencePlanRecord(record.plan, "other-target", record.plan_hash,
+                                      record.action_count, record.max_duration_ms,
+                                      workflow_revision=record.workflow_revision)
+
+    executor = MismatchedExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+
+    with pytest.raises(ValueError, match="invalid sequence plan record"):
+        surf.kvm_sequence_authorize(PLAN, approved=True)
+    assert executor.authorizations == []
