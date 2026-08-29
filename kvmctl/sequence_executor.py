@@ -18,6 +18,9 @@ from .results import normalize_error
 from .client import effective_endpoint_identity
 
 
+_WAIT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kvmctl-wait")
+
+
 @dataclass(frozen=True)
 class SequencePlanRecord:
     plan: SequencePlan
@@ -141,9 +144,14 @@ class SequenceExecutor:
             plan_hash_value = "sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest()
         ended = time.time()
         began = self.clock() if start is None else start
-        self._checkpoint("aborted", target=target, plan_hash=plan_hash_value,
-                         reason=reason, final_result="failure", started_at=began,
-                         ended_at=ended, duration_ms=max(0, int((self.clock() - began) * 1000)))
+        try:
+            self._checkpoint("aborted", target=target, plan_hash=plan_hash_value,
+                             reason=reason, final_result="failure", started_at=began,
+                             ended_at=ended, duration_ms=max(0, int((self.clock() - began) * 1000)))
+        except BaseException:
+            # Rejection journaling is evidence only and must never replace the
+            # semantic rejection (or expose a journal/path error to callers).
+            pass
 
     def _checkpoint(self, transition: str, *, target: str | None, plan_hash: str, **details) -> None:
         current = self.session.current
@@ -222,8 +230,12 @@ class SequenceExecutor:
         if token is not None:
             authorization = self._authorizations.get(token)
             if authorization is None and self.authorization_store is not None:
-                peek = getattr(self.authorization_store, "peek", None)
-                authorization = peek(token, binding=self._binding_identity()) if peek is not None else self.authorization_store.take(token, binding=self._binding_identity())
+                try:
+                    peek = getattr(self.authorization_store, "peek", None)
+                    authorization = peek(token, binding=self._binding_identity()) if peek is not None else self.authorization_store.take(token, binding=self._binding_identity())
+                except PermissionError as exc:
+                    self.reject("authorization store integrity failure", start=start)
+                    return SequenceExecutionResult(False, True, "", "", error="authorization invalid")
                 from_store = authorization is not None
         if not isinstance(authorization, SequenceAuthorization) or not authorization.token:
             reason = "authorization invalid" if token is not None and self.authorization_store is not None else "authorization missing"
@@ -245,7 +257,13 @@ class SequenceExecutor:
             return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
                                            error="workflow target mismatch")
         if self.authorization_store is not None:
-            consumed = self.authorization_store.take(authorization.token, binding=self._binding_identity())
+            try:
+                consumed = self.authorization_store.take(authorization.token, binding=self._binding_identity())
+            except PermissionError:
+                self.reject("authorization store integrity failure", target=authorization.target,
+                            plan_hash_value=authorization.plan_hash, start=start)
+                return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                               error="authorization invalid")
             if consumed is None:
                 reason = "authorization invalid" if token not in self._authorizations else "authorization used"
                 self.reject(reason, target=authorization.target, plan_hash_value=authorization.plan_hash, start=start)
@@ -407,15 +425,15 @@ class SequenceExecutor:
         remaining = min(self._active_expires_at or float("inf"), self._active_deadline or float("inf")) - self.clock()
         if remaining <= 0:
             raise TimeoutError("sequence deadline expired")
-        completed = threading.Event()
         outcome = []
         def run():
             try: self.sleep(duration)
             except BaseException as exc: outcome.append(exc)
-            finally: completed.set()
-        threading.Thread(target=run, daemon=True).start()
+        future = _WAIT_EXECUTOR.submit(run)
         timeout = remaining if duration > remaining else duration + 0.1
-        if not completed.wait(timeout=timeout):
+        try:
+            future.result(timeout=timeout)
+        except FutureTimeout:
             self._wait_poisoned = True
             raise TimeoutError("sequence deadline expired")
         if outcome:

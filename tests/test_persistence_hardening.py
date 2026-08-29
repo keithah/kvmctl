@@ -50,3 +50,15 @@ def test_atomic_write_rejects_symlink_target(tmp_path):
     else:
         raise AssertionError("symlink target accepted")
     assert target.read_text() == "keep"
+
+
+def test_tampered_store_fails_closed_and_does_not_overwrite(tmp_path):
+    from kvmctl.session_store import AuthorizationStoreIntegrityError
+    path = tmp_path / "auth"
+    s = FileAuthorizationStore(str(path))
+    s.put(auth("keep"))
+    original = path.read_bytes()
+    path.write_bytes(original.replace(b"keep", b"evil"))
+    with __import__("pytest").raises(AuthorizationStoreIntegrityError):
+        s.put(auth("new"))
+    assert b"new" not in path.read_bytes()

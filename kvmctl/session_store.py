@@ -11,6 +11,10 @@ def _paths(path):
     return p, p.with_name(p.name + ".key")
 
 
+class AuthorizationStoreIntegrityError(PermissionError):
+    """Persistent authorization state cannot be trusted."""
+
+
 def _secure_dir(path: pathlib.Path, *, create=False) -> None:
     path = pathlib.Path(path).expanduser()
     if create:
@@ -135,15 +139,19 @@ class FileAuthorizationStore:
     def _records(self):
         if not self.path.exists(): return []
         _secure_file(self.path); _secure_file(self.keypath)
-        env = json.loads(self.path.read_text(encoding="utf-8"))
-        if "payloads" in env:
-            records = env["payloads"]
-            raw = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
-        else:  # read old single-capability files during migration
-            records = [env["payload"]]
-            raw = json.dumps(env["payload"], sort_keys=True, separators=(",", ":")).encode()
-        if not hmac.compare_digest(env["mac"], hmac.new(self.keypath.read_bytes(), raw, hashlib.sha256).hexdigest()):
-            return []
+        try:
+            env = json.loads(self.path.read_text(encoding="utf-8"))
+            if "payloads" in env:
+                records = env["payloads"]
+                raw = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+            else:  # read old single-capability files during migration
+                records = [env["payload"]]
+                raw = json.dumps(env["payload"], sort_keys=True, separators=(",", ":")).encode()
+            valid = hmac.compare_digest(env["mac"], hmac.new(self.keypath.read_bytes(), raw, hashlib.sha256).hexdigest())
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
+        if not valid:
+            raise AuthorizationStoreIntegrityError("authorization store integrity failure")
         return records
 
     def _write_records(self, records):
@@ -179,7 +187,7 @@ class FileAuthorizationStore:
                 from .sequence_executor import SequenceAuthorization
                 return SequenceAuthorization(validate_plan(p["plan"]), p["target"], p["plan_hash"],
                     float(p["expires_at"]), p.get("workflow_revision"), token=token, binding=p.get("binding", ""))
-            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, PermissionError):
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                 return None
 
     def peek(self, token, *, binding=None): return self._read(token, consume=False, binding=binding)

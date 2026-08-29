@@ -316,3 +316,24 @@ def test_blocking_wait_is_bounded_by_deadline(tmp_path):
     assert not result.ok and result.error == "deadline exceeded"
     assert entered.is_set()
     assert ("text", "must-not-run") not in client.calls
+
+
+def test_timed_out_injected_waits_use_one_bounded_worker(tmp_path):
+    import threading
+    entered = threading.Event(); release = threading.Event()
+    def blocking_sleep(_duration):
+        entered.set(); release.wait(10)
+    clients = []
+    for index in range(3):
+        client = FakeClient(); clients.append(client)
+        ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / f"wait-{index}.jsonl"),
+                              clock=lambda: 0.0, sleep=blocking_sleep, device_id=f"wait-{index}")
+        auth = ex.authorize(ex.plan({"target":"pve2", "max_duration_ms": 5,
+                                     "actions":[{"type":"wait", "duration_ms":1000},
+                                                 {"type":"text", "value":"never"}]}), approved=True)
+        result = ex.execute(auth)
+        assert result.error == "deadline exceeded"
+    release.set()
+    assert entered.is_set()
+    assert all(("text", "never") not in client.calls for client in clients)
+    assert sum(t.name.startswith("kvmctl-wait") for t in threading.enumerate()) <= 1

@@ -125,6 +125,13 @@ Canonicalized endpoint identity now includes scheme, network hostname, effective
 - Added Host positive/negative, symlinked parent/lock, and CLI plan propagation regressions.
 - Follow-up hardening canonicalizes numeric ports, rejects ambiguous numeric IPv4 authorities, prevents recursive lock-directory setup from traversing symlinked parents, validates authorization lock metadata from the opened descriptor, and excludes caller-controlled fallback URL/Host fields from non-HTTP binding identities.
 
+```text
+Focused rejection/integrity/wait tests:
+37 passed in 0.18s
+```
+
+Additional hardening makes semantic validation and session-bound authorization rejection paths emit redacted aborted checkpoints without allowing journal failures to mask the original exception. Authorization-store MAC and structural corruption now raises a typed integrity error before any write, preserving the existing state; execution converts that failure into a safe rejection. Injected blocking waits now use one process-bounded executor worker rather than spawning unmanaged daemon threads per attempt.
+
 ## Boundary hardening verification (2026-08-29)
 
 ```text

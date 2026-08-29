@@ -41,13 +41,13 @@ class FakeExecutor:
         return self.execute(self.authorize(planned, approved=approved, ttl_s=ttl_s))
 
 
-def surface(*, write_enabled=False, executor=None, repository=None):
+def surface(*, write_enabled=False, executor=None, repository=None, journal=None):
     session = SessionState()
     session.mark_selected(RACK["pve1"])
     session.mark_verified("test")
     return SemanticSurface(object(), session=session, write_enabled=write_enabled,
                            sequence_executor=executor or FakeExecutor(),
-                           workflow_repository=repository)
+                           workflow_repository=repository, journal=journal)
 
 
 def test_sequence_plan_is_read_only_when_writes_disabled():
@@ -180,3 +180,32 @@ def test_authorize_rejects_mismatched_raw_record_from_executor():
     with pytest.raises(ValueError, match="invalid sequence plan record"):
         surf.kvm_sequence_authorize(PLAN, approved=True)
     assert executor.authorizations == []
+
+
+def test_invalid_record_and_session_mismatch_are_journaled(tmp_path):
+    import json
+    from kvmctl.journal import Journal
+    journal = Journal(tmp_path / "j.jsonl")
+    class JournalingExecutor(FakeExecutor):
+        def reject(self, reason, *, target=None, plan_hash_value=""):
+            journal.checkpoint(operation="sequence", target=target, transition="aborted",
+                               plan_hash=plan_hash_value or "sha256:test", reason=reason)
+    class MalformedExecutor(JournalingExecutor):
+        def plan(self, plan, *, workflow_revision=None):
+            return {"plan": plan, "target": plan.target}
+    executor = MalformedExecutor()
+    surf = surface(write_enabled=True, executor=executor, journal=journal)
+    with pytest.raises(TypeError):
+        surf.kvm_sequence_authorize(PLAN, approved=True)
+    records = [json.loads(line) for line in (tmp_path / "j.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["reason"] == "invalid sequence plan record"
+
+    executor = JournalingExecutor()
+    surf = surface(write_enabled=True, executor=executor, journal=journal)
+    surf.session.current = None
+    with pytest.raises(ValueError, match="session"):
+        surf.kvm_sequence_authorize(PLAN, approved=True)
+    records = [json.loads(line) for line in (tmp_path / "j.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert "session" in records[-1]["reason"]
