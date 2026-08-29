@@ -121,10 +121,8 @@ class SequenceExecutor:
         base_url = getattr(client, "base_url", None)
         if isinstance(base_url, str) and base_url:
             return "endpoint:" + effective_endpoint_identity(base_url, getattr(client, "host", None))
-        for attr in ("url", "host"):
-            value = getattr(client, attr, None)
-            if isinstance(value, str) and value:
-                return f"client:{attr}:{value}"
+        # Test doubles and non-HTTP transports still get a process-local
+        # identity, but caller-controlled URL/Host fields are never trusted.
         return f"client:{id(client)}"
 
     def _binding_identity(self) -> str:

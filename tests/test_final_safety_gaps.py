@@ -65,6 +65,12 @@ def test_effective_endpoint_identity_rejects_invalid_http_authorities(host):
         effective_endpoint_identity("https://shared.test:443/api", host)
 
 
+def test_effective_endpoint_identity_canonicalizes_and_rejects_ambiguous_numeric_hosts():
+    assert effective_endpoint_identity("https://shared.test", "Example.COM:00080").endswith("|host=example.com:80")
+    with pytest.raises(ValueError):
+        effective_endpoint_identity("https://shared.test", "192.168.001.1")
+
+
 def test_persistence_rejects_symlinked_parent_and_lock(tmp_path):
     real = tmp_path / "real"; real.mkdir()
     parent_link = tmp_path / "parent-link"; parent_link.symlink_to(real, target_is_directory=True)
@@ -84,6 +90,14 @@ def test_device_lock_rejects_symlinked_lock_file(tmp_path, monkeypatch):
     name = hashlib.sha256(b"symlinked").hexdigest() + ".lock"
     (lock_dir / name).symlink_to(tmp_path / "outside.lock")
     assert not device_lock("symlinked").acquire(blocking=False)
+
+
+def test_device_lock_rejects_symlinked_parent_directory(tmp_path, monkeypatch):
+    real = tmp_path / "real"; real.mkdir()
+    linked = tmp_path / "locks"; linked.symlink_to(real, target_is_directory=True)
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(linked))
+    with pytest.raises(PermissionError):
+        device_lock("parent-link")
 
 
 def test_persisted_authorization_take_is_process_safe(tmp_path):

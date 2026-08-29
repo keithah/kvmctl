@@ -37,12 +37,12 @@ def _canonical_http_authority(value: str) -> str:
             raise ValueError("HTTP Host identity is ambiguous")
         if suffix and not 0 < int(suffix[1:]) <= 65535:
             raise ValueError("HTTP Host identity has an invalid port")
-        return value[:close + 1].lower() + suffix
+        return value[:close + 1].lower() + (f":{int(suffix[1:])}" if suffix else "")
     if ":" in value:
         name, port = value.rsplit(":", 1)
         if not name or not port.isdigit() or not 0 < int(port) <= 65535:
             raise ValueError("HTTP Host identity has an invalid port")
-        value = name + ":" + port
+        value = name + ":" + str(int(port))
     raw_name = value.rsplit(":", 1)[0] if ":" in value else value
     suffix = value[len(raw_name):]
     name = raw_name
@@ -51,6 +51,8 @@ def _canonical_http_authority(value: str) -> str:
     try:
         ipaddress.IPv4Address(name)
     except ValueError:
+        if re.fullmatch(r"[0-9.]+", name):
+            raise ValueError("HTTP Host identity has invalid IPv4")
         if len(name) > 253 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*", name):
             raise ValueError("HTTP Host identity has invalid hostname")
     return name.lower().rstrip(".") + suffix

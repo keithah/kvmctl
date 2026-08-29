@@ -122,7 +122,10 @@ class FileAuthorizationStore:
             raise
         lock = os.fdopen(fd, "a+")
         try:
-            _secure_file(self.lockpath)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                raise PermissionError(f"unsafe lock file: {self.lockpath}")
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try: yield
             finally: fcntl.flock(lock.fileno(), fcntl.LOCK_UN)

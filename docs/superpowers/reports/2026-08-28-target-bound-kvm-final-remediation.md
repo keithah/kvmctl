@@ -123,15 +123,16 @@ Canonicalized endpoint identity now includes scheme, network hostname, effective
 - Authorization and device locks use no-follow descriptor opens and validate regular-file ownership and exact 0600 mode; unsafe symlink, type, parent, and race outcomes fail closed. Portable protections are limited to these OS-supported no-follow and metadata checks.
 - CLI `sequence-execute --plan` now passes the supplied plan, approval state, and TTL into semantic execution for exact-plan stale/changed rejection.
 - Added Host positive/negative, symlinked parent/lock, and CLI plan propagation regressions.
+- Follow-up hardening canonicalizes numeric ports, rejects ambiguous numeric IPv4 authorities, prevents recursive lock-directory setup from traversing symlinked parents, validates authorization lock metadata from the opened descriptor, and excludes caller-controlled fallback URL/Host fields from non-HTTP binding identities.
 
 ## Boundary hardening verification (2026-08-29)
 
 ```text
 Focused endpoint/persistence/CLI tests:
-35 passed in 0.23s
+51 passed in 0.26s
 
 Full suite:
-299 passed, 3 skipped in 24.03s
+301 passed, 3 skipped in 22.76s
 
 compileall:
 exit 0
