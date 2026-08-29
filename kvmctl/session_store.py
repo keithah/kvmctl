@@ -1,6 +1,6 @@
 """Tamper-evident persistence for verified sessions and capabilities."""
 from __future__ import annotations
-import hashlib, hmac, json, os, pathlib, stat, tempfile, time
+import hashlib, hmac, json, os, pathlib, stat, tempfile, time, errno
 from contextlib import contextmanager
 import fcntl
 from .machines import SelectionRecord, SelectionState, SessionState
@@ -9,6 +9,29 @@ from .machines import SelectionRecord, SelectionState, SessionState
 def _paths(path):
     p = pathlib.Path(path).expanduser()
     return p, p.with_name(p.name + ".key")
+
+
+def _secure_dir(path: pathlib.Path, *, create=False) -> None:
+    path = pathlib.Path(path).expanduser()
+    if create:
+        parts = path.parts
+        current = pathlib.Path(parts[0])
+        for part in parts[1:]:
+            current /= part
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                current.mkdir(mode=0o700)
+                info = current.lstat()
+            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                raise PermissionError(f"unsafe persistent directory: {current}")
+        info = path.lstat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise PermissionError(f"unsafe persistent directory: {path}")
+        return
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise PermissionError(f"unsafe persistent directory: {path}")
 
 
 def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
@@ -22,8 +45,19 @@ def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
         raise PermissionError(f"unsafe persistent file: {path}")
 
 
+def _create_secret(path: pathlib.Path) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, os.urandom(32))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def _atomic_write(path: pathlib.Path, data: str) -> None:
     path = pathlib.Path(path)
+    _secure_dir(path.parent)
     _secure_file(path, allow_missing=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = pathlib.Path(tmp_name)
@@ -57,9 +91,12 @@ def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
     payload = {"endpoint": endpoint, "machine": rec.machine, "port": rec.port,
                "state": rec.state.value, "detail": rec.detail[:300], "at": rec.at}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    p, keypath = _paths(path); p.parent.mkdir(parents=True, exist_ok=True)
+    p, keypath = _paths(path); _secure_dir(p.parent, create=True)
     if not keypath.exists():
-        keypath.write_bytes(os.urandom(32)); os.chmod(keypath, 0o600)
+        try:
+            _create_secret(keypath)
+        except FileExistsError:
+            pass
     _secure_file(keypath); _secure_file(p, allow_missing=True)
     key = keypath.read_bytes()
     envelope = {"payload": payload, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
@@ -74,13 +111,23 @@ class FileAuthorizationStore:
 
     @contextmanager
     def _locked(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_dir(self.path.parent, create=True)
         _secure_file(self.path, allow_missing=True); _secure_file(self.keypath, allow_missing=True)
-        with self.lockpath.open("a+") as lock:
-            os.chmod(self.lockpath, 0o600); _secure_file(self.lockpath)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(self.lockpath, flags, 0o600)
+        except OSError as exc:
+            if getattr(exc, "errno", None) == errno.ELOOP:
+                raise PermissionError(f"unsafe lock file: {self.lockpath}") from exc
+            raise
+        lock = os.fdopen(fd, "a+")
+        try:
+            _secure_file(self.lockpath)
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try: yield
             finally: fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock.close()
 
     def _records(self):
         if not self.path.exists(): return []
@@ -104,7 +151,10 @@ class FileAuthorizationStore:
     def put(self, auth):
         with self._locked():
             if not self.keypath.exists():
-                self.keypath.write_bytes(os.urandom(32)); os.chmod(self.keypath, 0o600)
+                try:
+                    _create_secret(self.keypath)
+                except FileExistsError:
+                    pass
             _secure_file(self.keypath)
             payload = {"token": auth.token, "target": auth.target, "plan": auth.plan.to_mapping(),
                        "plan_hash": auth.plan_hash, "expires_at": auth.expires_at,
@@ -136,6 +186,7 @@ class FileAuthorizationStore:
 def load_session(path: str, *, endpoint: str, max_age_s: float = 3600.0):
     session = SessionState(); p, keypath = _paths(path)
     try:
+        _secure_dir(p.parent)
         _secure_file(p); _secure_file(keypath)
         env = json.loads(p.read_text(encoding="utf-8")); payload = env["payload"]
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

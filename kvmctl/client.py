@@ -7,6 +7,8 @@ GLKVM (KVMD 4.82): URL-encoded form login, lowercase ``token`` header auth,
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import re
 import ssl
 import threading
 from typing import Any, Optional
@@ -17,48 +19,64 @@ import httpx
 REDACTED = "***"
 
 
-def effective_endpoint_identity(base_url: str, host: Optional[str] = None) -> str:
-    """Return the canonical identity used to bind sessions and capabilities.
+def _canonical_http_authority(value: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("HTTP Host identity is ambiguous")
+    if any(ord(c) <= 32 or c in "\\\"#%/?@\\\\" for c in value):
+        raise ValueError("HTTP Host identity is ambiguous")
+    if value.startswith("["):
+        close = value.find("]")
+        if close < 0 or value.count("[") != 1 or value.count("]") != 1:
+            raise ValueError("HTTP Host identity is ambiguous")
+        try:
+            ipaddress.IPv6Address(value[1:close])
+        except ValueError as exc:
+            raise ValueError("HTTP Host identity has invalid IPv6") from exc
+        suffix = value[close + 1:]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            raise ValueError("HTTP Host identity is ambiguous")
+        if suffix and not 0 < int(suffix[1:]) <= 65535:
+            raise ValueError("HTTP Host identity has an invalid port")
+        return value[:close + 1].lower() + suffix
+    if ":" in value:
+        name, port = value.rsplit(":", 1)
+        if not name or not port.isdigit() or not 0 < int(port) <= 65535:
+            raise ValueError("HTTP Host identity has an invalid port")
+        value = name + ":" + port
+    raw_name = value.rsplit(":", 1)[0] if ":" in value else value
+    suffix = value[len(raw_name):]
+    name = raw_name
+    if name.endswith("."):
+        name = name[:-1]
+    try:
+        ipaddress.IPv4Address(name)
+    except ValueError:
+        if len(name) > 253 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*", name):
+            raise ValueError("HTTP Host identity has invalid hostname")
+    return name.lower().rstrip(".") + suffix
 
-    The HTTP Host header is part of the endpoint identity because several
-    virtual hosts can legitimately share one network URL.
-    """
+
+def effective_endpoint_identity(base_url: str, host: Optional[str] = None) -> str:
+    """Return the canonical identity used to bind sessions and capabilities."""
     if not isinstance(base_url, str) or not base_url:
         raise ValueError("endpoint URL is required")
-    parsed = urlsplit(base_url)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("endpoint URL must include an http(s) host")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("endpoint URL must not contain credentials")
     try:
-        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        parsed = urlsplit(base_url)
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname
+        if scheme not in {"http", "https"} or not hostname:
+            raise ValueError("endpoint URL must include an http(s) host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("endpoint URL must not contain credentials")
+        port = parsed.port or (443 if scheme == "https" else 80)
     except ValueError as exc:
-        raise ValueError("endpoint URL has an invalid port") from exc
-    network_host = parsed.hostname.lower().rstrip(".")
+        raise ValueError("endpoint URL has an invalid authority") from exc
+    network_host = hostname.lower().rstrip(".")
     if ":" in network_host:
+        ipaddress.IPv6Address(network_host)
         network_host = f"[{network_host}]"
-    configured_host = host if host is not None else network_host
-    if not isinstance(configured_host, str) or not configured_host.strip():
-        raise ValueError("HTTP Host identity is required")
-    if configured_host != configured_host.strip() or any(c in configured_host for c in "\r\n,/"):
-        raise ValueError("HTTP Host identity is ambiguous")
-    # Host is an authority, not an arbitrary header value. Normalize DNS
-    # case while retaining an explicitly supplied port.
-    host_parts = configured_host.rsplit(":", 1)
-    if configured_host.startswith("["):
-        close = configured_host.find("]")
-        if close < 0 or (len(configured_host) > close + 1 and configured_host[close + 1] != ":"):
-            raise ValueError("HTTP Host identity is ambiguous")
-        host_identity = configured_host[:close + 1].lower() + configured_host[close + 1:]
-    elif len(host_parts) == 2 and host_parts[1].isdigit():
-        if not 0 < int(host_parts[1]) <= 65535:
-            raise ValueError("HTTP Host identity has an invalid port")
-        host_identity = host_parts[0].lower().rstrip(".") + ":" + host_parts[1]
-    elif ":" in configured_host:
-        raise ValueError("HTTP Host identity is ambiguous")
-    else:
-        host_identity = configured_host.lower().rstrip(".")
-    return f"{parsed.scheme.lower()}://{network_host}:{port}|host={host_identity}"
+    configured_host = _canonical_http_authority(host if host is not None else network_host)
+    return f"{scheme}://{network_host}:{port}|host={configured_host}"
 
 
 class KvmClient:

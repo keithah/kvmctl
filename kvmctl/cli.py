@@ -307,8 +307,8 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             elif args.command == "sequence-authorize":
                 out = surf.kvm_sequence_authorize(plan, approved=approved, ttl_s=args.ttl)
             else:
-                out = _call_sequence(surf, "kvm_sequence_execute",
-                                     approval_token=args.approval_token)
+                out = _call_sequence(surf, "kvm_sequence_execute", plan,
+                                     approval_token=args.approval_token, approved=approved, ttl_s=args.ttl)
         elif args.command == "workflow-authorize":
             need_write(); out = _call_sequence(surf, "kvm_workflow_authorize", args.name, args.revision, approved=True, target=args.target, ttl_s=args.ttl)
         elif args.command == "workflow-list":

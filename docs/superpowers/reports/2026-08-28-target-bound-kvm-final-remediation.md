@@ -115,3 +115,27 @@ Rechecked authorization expiry and sequence deadlines before each HID mutation, 
 ## Effective HTTP Host binding remediation (2026-08-28)
 
 Canonicalized endpoint identity now includes scheme, network hostname, effective port, and configured HTTP Host/virtual-host authority. CLI session persistence and sequence authorization binding derive this identity from the constructed client rather than caller-supplied binding fields. Equivalent clients with the same URL and Host can replay persisted state; a different Host is rejected. Invalid or ambiguous Host authorities fail closed. Added same-URL/different-Host rejection and matching-Host persistence regressions.
+
+## Boundary hardening remediation (2026-08-29)
+
+- Replaced permissive Host handling with strict HTTP authority parsing: valid DNS names, IPv4, bracketed IPv6, and 1-65535 ports are canonicalized consistently; userinfo, whitespace/control characters, malformed brackets/IPv6, ambiguous colons, invalid ports, and path-like authorities are rejected.
+- Persistence now validates every parent component without following symlinks, creates private directories/files safely, uses exclusive no-follow secret creation, and keeps atomic file plus directory fsync persistence.
+- Authorization and device locks use no-follow descriptor opens and validate regular-file ownership and exact 0600 mode; unsafe symlink, type, parent, and race outcomes fail closed. Portable protections are limited to these OS-supported no-follow and metadata checks.
+- CLI `sequence-execute --plan` now passes the supplied plan, approval state, and TTL into semantic execution for exact-plan stale/changed rejection.
+- Added Host positive/negative, symlinked parent/lock, and CLI plan propagation regressions.
+
+## Boundary hardening verification (2026-08-29)
+
+```text
+Focused endpoint/persistence/CLI tests:
+35 passed in 0.23s
+
+Full suite:
+299 passed, 3 skipped in 24.03s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```

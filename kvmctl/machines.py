@@ -31,6 +31,7 @@ import hashlib
 import os
 import pathlib
 import fcntl
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Protocol, Sequence
@@ -163,7 +164,9 @@ class DeviceLock:
     def __init__(self, device_id: str):
         root = pathlib.Path(os.environ.get("KVMCTL_LOCK_DIR", "~/.cache/kvmctl/locks")).expanduser()
         root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(root, 0o700)
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise PermissionError(f"unsafe lock directory: {root}")
         name = hashlib.sha256(str(device_id).encode("utf-8")).hexdigest() + ".lock"
         self._path = root / name
         self._local = threading.Lock()
@@ -172,8 +175,13 @@ class DeviceLock:
         if not self._local.acquire(blocking):
             return False
         try:
-            self._file = self._path.open("a+")
-            os.chmod(self._path, 0o600)
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self._path, flags, 0o600)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+                os.close(fd)
+                raise PermissionError("unsafe device lock file")
+            self._file = os.fdopen(fd, "a+")
             flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
             fcntl.flock(self._file.fileno(), flags)
         except (OSError, ValueError):

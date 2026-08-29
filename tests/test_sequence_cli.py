@@ -93,6 +93,15 @@ def test_sequence_plan_reads_file_and_writes_optional_output(monkeypatch, tmp_pa
     assert json.loads(capsys.readouterr().out)["operation"] == "kvm_sequence_plan"
 
 
+def test_sequence_execute_passes_supplied_plan_for_exact_validation(monkeypatch, capsys):
+    FakeSurface.calls = []
+    monkeypatch.setattr("kvmctl.cli.SemanticSurface", FakeSurface)
+    rc = main(["--url", "https://kvm.test", "--yes", "sequence-execute",
+               "--plan", json.dumps(PLAN), "--approval-token", "opaque"], client=object())
+    assert rc == 0
+    assert FakeSurface.calls == [("execute", PLAN, True, 30.0)]
+
+
 def test_cli_uses_supplied_verified_session_context(monkeypatch):
     seen = []
     class Surface(FakeSurface):

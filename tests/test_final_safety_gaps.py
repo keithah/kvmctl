@@ -1,9 +1,10 @@
 import json
 import threading
+import pytest
 from kvmctl.journal import Journal
-from kvmctl.session_store import FileAuthorizationStore
-from kvmctl.session_store import load_session, save_session
+from kvmctl.session_store import FileAuthorizationStore, load_session, save_session
 from kvmctl.client import effective_endpoint_identity
+from kvmctl.machines import device_lock
 from kvmctl.sequence_executor import SequenceExecutor
 from kvmctl.results import normalize_error, operation_result
 from test_sequence_executor import FakeClient, ready_session
@@ -50,6 +51,39 @@ def test_session_persistence_binds_effective_http_host(tmp_path):
     save_session(session, path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example'))
     assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example')).current is not None
     assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-b.example')).current is None
+
+
+@pytest.mark.parametrize("host", ["kvm.example", "192.0.2.10:8443", "[2001:db8::10]:8443", "[::1]"])
+def test_effective_endpoint_identity_accepts_valid_http_authorities(host):
+    identity = effective_endpoint_identity("https://shared.test:443/api", host)
+    assert identity.endswith("|host=" + host.lower())
+
+
+@pytest.mark.parametrize("host", ["example.com@evil", "foo bar", "[::1]:99999", "[::1", "::1", "example.com:", ":8080", "[]", "example.com/path", "example..com"])
+def test_effective_endpoint_identity_rejects_invalid_http_authorities(host):
+    with pytest.raises(ValueError):
+        effective_endpoint_identity("https://shared.test:443/api", host)
+
+
+def test_persistence_rejects_symlinked_parent_and_lock(tmp_path):
+    real = tmp_path / "real"; real.mkdir()
+    parent_link = tmp_path / "parent-link"; parent_link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(parent_link / "session.json"), endpoint="https://x:443|host=x")
+    store = FileAuthorizationStore(str(tmp_path / "auth.json"))
+    (tmp_path / "auth.json.lock").symlink_to(real / "outside.lock")
+    with pytest.raises(PermissionError):
+        with store._locked():
+            pass
+
+
+def test_device_lock_rejects_symlinked_lock_file(tmp_path, monkeypatch):
+    lock_dir = tmp_path / "locks"; lock_dir.mkdir()
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(lock_dir))
+    import hashlib
+    name = hashlib.sha256(b"symlinked").hexdigest() + ".lock"
+    (lock_dir / name).symlink_to(tmp_path / "outside.lock")
+    assert not device_lock("symlinked").acquire(blocking=False)
 
 
 def test_persisted_authorization_take_is_process_safe(tmp_path):
