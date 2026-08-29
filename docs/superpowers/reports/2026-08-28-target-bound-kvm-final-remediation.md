@@ -78,3 +78,21 @@ exit 0
 ```
 
 Final closure changes reject non-finite and overlong authorization TTLs; journal replay and in-memory identity rejection with bound target, timestamps, duration, final-result, and verification evidence; and centralize safe error normalization for sequence CLI/MCP envelopes and journal reasons.
+
+## Final safety-gap remediation verification (2026-08-28)
+
+```text
+Focused remediation tests:
+63 passed in 0.32s
+
+Full suite:
+274 passed, 3 skipped in 22.92s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```
+
+Implemented a SHA-256 endpoint/device keyed flock lock with fail-closed acquisition and process-local contention handling; propagated canonical plan hashes into semantic policy rejection checkpoints; added JSON workflow-file loading via `--workflows`/`KVMCTL_WORKFLOWS_FILE` for standalone CLI and MCP invocations; and retained one bounded screen worker per executor, poisoning it after timeout instead of accumulating timed-out threads. Added cross-process lock and worker-bound regression coverage.

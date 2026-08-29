@@ -397,8 +397,11 @@ class SemanticSurface:
 
     def kvm_sequence_authorize(self, plan, *, approved: bool,
                                ttl_s: float = 30.0) -> dict:
-        target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
-        self._sequence_write_gate("kvm_sequence_authorize", target=target)
+        canonical_input = validate_plan(plan) if isinstance(plan, dict) else None
+        target = canonical_input.target if canonical_input is not None else getattr(plan, "target", None)
+        exact_hash = plan_hash(canonical_input) if canonical_input is not None else getattr(plan, "plan_hash", "")
+        self._sequence_write_gate("kvm_sequence_authorize", target=target,
+                                  plan_hash_value=exact_hash)
         planned = self._validated_sequence_record(plan)
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
         result = self._sequence_envelope(
@@ -411,18 +414,20 @@ class SemanticSurface:
 
     def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
                              approved: bool = False, ttl_s: float = 30.0) -> dict:
-        target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
-        self._sequence_write_gate("kvm_sequence_execute", target=target)
+        canonical_input = validate_plan(plan) if plan is not None else None
+        target = canonical_input.target if canonical_input is not None else None
+        self._sequence_write_gate("kvm_sequence_execute", target=target,
+                                  plan_hash_value=(plan_hash(canonical_input) if canonical_input is not None else ""))
         if not approval_token:
             if plan is not None:
                 # Preserve deterministic plan/target errors ahead of the
                 # missing-token error, without authorizing or executing.
                 self._validated_sequence_record(plan)
-            target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
+            target = canonical_input.target if canonical_input is not None else None
             self.sequence_executor.reject("authorization missing", target=target,
-                                          plan_hash_value=plan_hash(validate_plan(plan)) if plan is not None else "")
+                                          plan_hash_value=plan_hash(canonical_input) if canonical_input is not None else "")
             raise ValueError("approval_token is required; authorize the exact plan first")
-        expected = validate_plan(plan) if plan is not None else None
+        expected = canonical_input
         result = self.sequence_executor.execute(approval_token, expected_plan=expected)
         return self._sequence_envelope(
             "kvm_sequence_execute", read_only=False, target=result.target,
@@ -449,7 +454,6 @@ class SemanticSurface:
 
     def kvm_workflow_authorize(self, name: str, revision: str, *, approved: bool,
                                target: str | None = None, ttl_s: float = 30.0) -> dict:
-        self._sequence_write_gate("kvm_sequence_authorize", target=target)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():
@@ -461,6 +465,7 @@ class SemanticSurface:
             raise
         actual = invocation_target or workflow.target
         bound = workflow.plan if workflow.plan.target == actual else replace(workflow.plan, target=actual)
+        self._sequence_write_gate("kvm_sequence_authorize", target=actual, plan_hash_value=plan_hash(bound))
         auth = self.sequence_executor.authorize(self.sequence_executor.plan(bound, workflow_revision=workflow.revision), approved=approved, ttl_s=ttl_s)
         result = self._sequence_envelope("kvm_workflow_authorize", read_only=False, target=auth.target, state="authorized", plan_hash=auth.plan_hash, workflow_revision=workflow.revision, expires_at=auth.expires_at)
         result["evidence"]["approval_token"] = auth.token
@@ -468,7 +473,6 @@ class SemanticSurface:
 
     def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool = False,
                              approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict:
-        self._sequence_write_gate("kvm_workflow_execute", target=target)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():
@@ -478,6 +482,8 @@ class SemanticSurface:
         except (TypeError, ValueError, KeyError) as exc:
             self.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=invocation_target)
             raise
+        self._sequence_write_gate("kvm_workflow_execute", target=invocation_target or workflow.target,
+                                  plan_hash_value=plan_hash(workflow.plan))
         if not approval_token:
             self.sequence_executor.reject("authorization missing", target=invocation_target or workflow.target,
                                           plan_hash_value=plan_hash(workflow.plan))

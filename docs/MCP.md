@@ -81,7 +81,10 @@ The registered tools are:
 - `kvm_workflow_list` / `kvm_workflow_inspect` — list or inspect redacted named workflow revisions (read-only).
 - `kvm_workflow_execute` — resolve a named revision, bind its target, and execute it.
 
-Safety rules:
+## Standalone named workflow lifecycle
+
+The server loads only declarative JSON workflow definitions from `KVMCTL_WORKFLOWS_FILE`; it never evaluates arbitrary code or shell commands. Call `kvm_workflow_list`/`kvm_workflow_inspect`, then `kvm_workflow_authorize` with approval. Pass the returned opaque `approval_token` to `kvm_workflow_execute` in the later call. The token is single-use and bound to revision, canonical plan hash, target, verified session, endpoint, and expiry. Inline sequences follow the identical plan → authorize → execute lifecycle.
+
 
 - Read-only tools are available by default.
 - `select`, `hid_reset`, and `rearm_otg` require `KVMCTL_WRITE_ENABLED=1`; `select` also requires `transport="kvm"`.

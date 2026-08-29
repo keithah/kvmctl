@@ -174,6 +174,19 @@ class WorkflowRepository:
             raise _fail("invalid workflow repository") from exc
         return cls(definitions)
 
+    @classmethod
+    def from_file(cls, path: str) -> "WorkflowRepository":
+        """Load declarative JSON workflows; never execute file contents."""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise WorkflowError("unable to load workflow definitions") from exc
+        mappings = payload.get("workflows") if isinstance(payload, Mapping) else payload
+        if not isinstance(mappings, list):
+            raise WorkflowError("workflow file must contain a list or workflows list")
+        return cls.from_mappings(mappings)
+
     def list(self) -> tuple[WorkflowDefinition, ...]:
         return self._definitions
 

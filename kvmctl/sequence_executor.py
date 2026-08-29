@@ -97,6 +97,8 @@ class SequenceExecutor:
         self._active_target = None
         self._active_plan_hash = ""
         self._active_deadline = None
+        self._screen_executor = None
+        self._screen_poisoned = False
         self._dispatch_table = {
             "key": self._dispatch_key,
             "text": self._dispatch_text,
@@ -258,7 +260,12 @@ class SequenceExecutor:
                                            error="authorization used")
         self._used_authorizations.add(authorization.token)
         result = SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash)
-        lock = device_lock(self.device_id)
+        try:
+            lock = device_lock(self.device_id)
+        except (OSError, PermissionError, ValueError):
+            result.error = "device lock unavailable"
+            self._abort_preflight(authorization, result.error)
+            return result
         if not lock.acquire(blocking=False):
             result.error = "device lock conflict"
             self._abort_preflight(authorization, result.error)
@@ -383,19 +390,36 @@ class SequenceExecutor:
         remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
         if remaining <= 0:
             raise TimeoutError("sequence deadline expired")
-        executor = ThreadPoolExecutor(max_workers=1)
+        if getattr(self, "_screen_poisoned", False):
+            raise RuntimeError("screen assertion unavailable")
+        executor = getattr(self, "_screen_executor", None)
+        if executor is None:
+            # One worker is retained per executor.  A timed-out device call
+            # poisons this bounded worker instead of creating leaked threads
+            # on every assertion attempt.
+            executor = self._screen_executor = ThreadPoolExecutor(max_workers=1)
+        # A worker remains poisoned until both bounded calls complete.
+        self._screen_poisoned = True
         try:
-            frame = executor.submit(snapshot).result(timeout=remaining)
+            try:
+                frame = executor.submit(snapshot).result(timeout=remaining)
+            except (FutureTimeout, TimeoutError) as exc:
+                self._screen_poisoned = True
+                raise RuntimeError("screen assertion unavailable") from exc
             if not isinstance(frame, (bytes, bytearray)) or len(frame) > self.SCREEN_MAX_BYTES:
                 raise RuntimeError("screen assertion unavailable")
             remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
             if remaining <= 0:
+                self._screen_poisoned = True
                 raise TimeoutError("sequence deadline expired")
-            text = executor.submit(ocr, bytes(frame)).result(timeout=remaining)
+            try:
+                text = executor.submit(ocr, bytes(frame)).result(timeout=remaining)
+            except (FutureTimeout, TimeoutError) as exc:
+                self._screen_poisoned = True
+                raise RuntimeError("screen assertion unavailable") from exc
+            self._screen_poisoned = False
         except (FutureTimeout, TimeoutError, OSError, ValueError, TypeError) as exc:
             raise RuntimeError("screen assertion unavailable") from exc
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
         if not isinstance(text, str) or len(text) > self.SCREEN_MAX_TEXT:
             raise RuntimeError("screen assertion unavailable")
         if action.contains not in text:

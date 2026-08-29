@@ -27,6 +27,10 @@ from __future__ import annotations
 
 import time
 import threading
+import hashlib
+import os
+import pathlib
+import fcntl
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Protocol, Sequence
@@ -150,14 +154,48 @@ class SelectionRecord:
         return self.state in (SelectionState.SELECTED_UNVERIFIED, SelectionState.VERIFIED)
 
 
-_DEVICE_LOCKS: dict[str, threading.Lock] = {}
+_DEVICE_LOCKS: dict[str, "DeviceLock"] = {}
 _DEVICE_LOCKS_GUARD = threading.Lock()
 
 
-def device_lock(device_id: str = "default") -> threading.Lock:
-    """Return the process-wide mutation lock for one KVM device."""
+class DeviceLock:
+    """A re-entrant thread lock backed by a fail-closed cross-process flock."""
+    def __init__(self, device_id: str):
+        root = pathlib.Path(os.environ.get("KVMCTL_LOCK_DIR", "~/.cache/kvmctl/locks")).expanduser()
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        name = hashlib.sha256(str(device_id).encode("utf-8")).hexdigest() + ".lock"
+        self._path = root / name
+        self._local = threading.Lock()
+
+    def acquire(self, blocking=True):
+        if not self._local.acquire(blocking):
+            return False
+        try:
+            self._file = self._path.open("a+")
+            os.chmod(self._path, 0o600)
+            flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+            fcntl.flock(self._file.fileno(), flags)
+        except (OSError, ValueError):
+            try:
+                if getattr(self, "_file", None): self._file.close()
+            except OSError: pass
+            self._local.release()
+            return False
+        return True
+
+    def release(self):
+        try:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            self._file.close()
+        finally:
+            self._local.release()
+
+
+def device_lock(device_id: str = "default") -> DeviceLock:
+    """Return a cached, cross-process mutation lock for one KVM device."""
     with _DEVICE_LOCKS_GUARD:
-        return _DEVICE_LOCKS.setdefault(device_id, threading.Lock())
+        return _DEVICE_LOCKS.setdefault(str(device_id), DeviceLock(str(device_id)))
 
 
 class SessionState:

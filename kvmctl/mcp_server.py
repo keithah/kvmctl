@@ -37,6 +37,10 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
     session = session or SessionState()
     authorization_store = FileAuthorizationStore(
         os.environ.get("KVMCTL_AUTH_FILE", "~/.cache/kvmctl/authorization.json"))
+    if workflow_repository is None:
+        workflow_path = os.environ.get("KVMCTL_WORKFLOWS_FILE")
+        workflow_repository = (WorkflowRepository.from_file(workflow_path)
+                               if workflow_path else WorkflowRepository(()))
 
     def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         raw = dispatch_tool(name, arguments, context={

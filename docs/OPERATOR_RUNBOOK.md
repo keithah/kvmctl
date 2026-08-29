@@ -140,7 +140,8 @@ kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_P
   --insecure --yes sequence-execute --plan ./plan.json --ttl 30
 ```
 
-Plans are limited to 10 actions, 30 seconds total, and 5 seconds per held key. Use only validated key names/chords and bounded mouse/text actions. Named workflows use `workflow-list`, `workflow-inspect`, and `workflow-execute`; always copy the current revision from inspection and provide the expected target. A target-independent workflow must still be bound to an explicit target at invocation.
+Named workflow definitions can be loaded for standalone CLI use with `--workflows FILE` or `KVMCTL_WORKFLOWS_FILE`. The file is JSON containing either a list of definitions or `{ "workflows": [...] }`; definitions are immutable and declarative. Run `workflow-list` and `workflow-inspect` first, then `--yes workflow-authorize NAME --revision REVISION`, and finally `--yes workflow-execute NAME --revision REVISION --approval-token TOKEN`. Repeat the file and revision on each invocation. Tokens are opaque, single-use capabilities bound to the exact canonical plan hash, target, endpoint, verified session, and expiry; do not log them.
+
 
 The executor aborts on a target/session mismatch, changed plan hash, expired authorization, deadline, or unexpected state. A lock-conflict rejection occurs before this invocation owns the device lock or any keys, so it records the abort and returns without performing ownership cleanup; all paths after lock ownership release keys, close streams they own, and release the device lock. Check `ok`, `completed_steps`, `cleanup_ok`, and `cleanup_errors` in the JSON result before retrying. Do not put passwords, tokens, cookies, authorization headers, or secrets in plans, logs, or screenshots; journal, result, and inspection output is redacted.
 

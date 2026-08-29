@@ -19,6 +19,7 @@ from kvmctl.semantics import SemanticSurface
 from kvmctl.results import normalize_error, operation_result
 from kvmctl.host import ArgvRunner
 from kvmctl.session_store import load_session, save_session, FileAuthorizationStore
+from kvmctl.workflows import WorkflowRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ca-bundle", default=None)
     p.add_argument("--yes", action="store_true",
                    help="authorize state-changing operations (required gate)")
+    p.add_argument("--workflows", default=None,
+                   help="JSON declarative workflow file (or KVMCTL_WORKFLOWS_FILE)")
     p.add_argument("--transport", choices=("kvm", "ssh"), default=None,
                    help="explicit transport; required for select/exec-command")
     sub = p.add_subparsers(dest="command", required=True)
@@ -199,7 +202,11 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
 
     loaded_session = session or load_session(__import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=args.url)
     try:
-        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner, authorization_store=FileAuthorizationStore(__import__('os').environ.get('KVMCTL_AUTH_FILE', '~/.cache/kvmctl/authorization.json')))
+        workflow_path = args.workflows or __import__('os').environ.get('KVMCTL_WORKFLOWS_FILE')
+        repository = WorkflowRepository.from_file(workflow_path) if workflow_path else WorkflowRepository(())
+        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner,
+                               workflow_repository=repository,
+                               authorization_store=FileAuthorizationStore(__import__('os').environ.get('KVMCTL_AUTH_FILE', '~/.cache/kvmctl/authorization.json')))
     except TypeError:
         surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner)
     surf.write_enabled = args.yes

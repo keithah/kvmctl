@@ -149,7 +149,18 @@ KVMCTL_LIVE_HOST=kvm.example.test \
 PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_live_hardware.py
 ```
 
-## MCP integration
+## Standalone CLI named workflows
+
+Named workflows are loaded from a declarative JSON file (no Python, shell, HID payloads, loops, or nested workflows are accepted). Set `KVMCTL_WORKFLOWS_FILE` or pass `--workflows ./workflows.json` on **each** invocation. Authorization is persisted in the mode-600 `KVMCTL_AUTH_FILE` store so the token can be handed to a later process:
+
+```sh
+kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json workflow-list
+kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json workflow-inspect open-terminal-and-identify --revision "$REVISION"
+kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json --yes workflow-authorize open-terminal-and-identify --revision "$REVISION"
+kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json --yes workflow-execute open-terminal-and-identify --revision "$REVISION" --approval-token "$APPROVAL_TOKEN"
+```
+
+The approval token is opaque, single-use, expiry-bound, and bound to the exact workflow revision, target, session, endpoint, and canonical plan hash. Keep it out of logs. Inline sequences use the same `sequence-plan`, `sequence-authorize`, then `sequence-execute --approval-token ...` lifecycle.
 
 Install the optional MCP adapter with `.venv/bin/pip install -e '.[mcp]'`, then configure an MCP client to launch `kvmctl-mcp`. It uses `KVMCTL_URL` and `KVMCTL_TOKEN` (or the optional login variables), is read-only by default, and returns snapshots as native MCP image content. Writes require `KVMCTL_WRITE_ENABLED=1` plus each operation's transport and policy requirements. See [`docs/MCP.md`](docs/MCP.md).
 
