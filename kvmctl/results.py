@@ -6,7 +6,23 @@ callers can consume results without importing a model class.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import Any, TypedDict
+
+
+_SENSITIVE_KEY = re.compile(
+    r"(?i)(?:pass(?:word|wd)?|token|secret|private[_ -]?key|credential|api[_ -]?key|authorization|cookie)"
+)
+
+
+def _safe(value: Any) -> Any:
+    """Copy result data while dropping fields whose names may contain secrets."""
+    if isinstance(value, Mapping):
+        return {str(key): _safe(item) for key, item in value.items()
+                if not _SENSITIVE_KEY.search(str(key))}
+    if isinstance(value, (list, tuple)):
+        return [_safe(item) for item in value]
+    return value
 
 
 class OperationError(TypedDict, total=False):
@@ -67,9 +83,9 @@ def operation_result(
         "ok": ok,
         "changed": changed,
         "state": state,
-        "evidence": dict(evidence or {}),
+        "evidence": _safe(dict(evidence or {})),
         "warnings": list(warnings),
-        "error": _normalise_error(error),
+        "error": _safe(_normalise_error(error)),
         "next_actions": list(next_actions),
     }
 

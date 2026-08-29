@@ -407,6 +407,7 @@ class SemanticSurface:
             plan_hash=result.plan_hash, action_count=len(authorization.plan.actions),
             elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
             execution_status="completed" if result.ok else "aborted",
+            completed_steps=result.completed_steps,
             cleanup_ok=result.cleanup_ok,
             cleanup_status="ok" if result.cleanup_ok else "failed",
             cleanup_errors=list(result.cleanup_errors), error=result.error or None)
@@ -441,6 +442,7 @@ class SemanticSurface:
             plan_hash=result.plan_hash, action_count=len(workflow.plan.actions),
             elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
             execution_status="completed" if result.ok else "aborted",
+            completed_steps=result.completed_steps,
             cleanup_ok=result.cleanup_ok,
             cleanup_status="ok" if result.cleanup_ok else "failed",
             cleanup_errors=list(result.cleanup_errors), error=result.error or None)

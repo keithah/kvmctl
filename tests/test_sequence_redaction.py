@@ -3,6 +3,7 @@ import json
 from kvmctl.journal import Journal
 from kvmctl.machines import RACK, SessionState
 from kvmctl.mcp_surface import dispatch_tool
+from kvmctl.results import operation_result
 from kvmctl.workflows import WorkflowRepository
 
 
@@ -41,6 +42,17 @@ def test_sequence_result_serialization_excludes_secret_plan_values(tmp_path):
     result = json.loads(dispatch_tool("kvm_sequence_plan", {"plan": plan}, context=context))
     serialized = json.dumps(result, sort_keys=True)
     assert result["ok"] is True
+    assert all(value not in serialized for value in SECRET_FIELDS.values())
+
+
+def test_operation_result_serialization_redacts_sensitive_named_fields():
+    result = operation_result(
+        operation="sequence", transport="kvm", read_only=False,
+        evidence={**SECRET_FIELDS, "nested": SECRET_FIELDS},
+        error={"code": "failed", "secret": SECRET_FIELDS["secret"]},
+    )
+    serialized = json.dumps(result, sort_keys=True)
+    assert all(name not in serialized for name in SECRET_FIELDS)
     assert all(value not in serialized for value in SECRET_FIELDS.values())
 
 

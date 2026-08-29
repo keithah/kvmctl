@@ -72,6 +72,7 @@ def test_sequence_authorize_and_execute_require_write_gate():
     executed = surf.kvm_sequence_execute(PLAN, approved=True)
     assert executed["operation"] == "kvm_sequence_execute"
     assert executed["evidence"]["cleanup_ok"] is True
+    assert executed["evidence"]["completed_steps"] == 1
 
 
 def test_inline_and_named_workflow_share_executor_and_envelope():
@@ -85,6 +86,7 @@ def test_inline_and_named_workflow_share_executor_and_envelope():
     assert named["operation"] == "kvm_workflow_execute"
     assert inline["evidence"]["plan_hash"] == named["evidence"]["plan_hash"]
     assert inline["evidence"]["action_count"] == named["evidence"]["action_count"] == 1
+    assert inline["evidence"]["completed_steps"] == named["evidence"]["completed_steps"] == 1
     assert len(executor.executions) == 2
 
 

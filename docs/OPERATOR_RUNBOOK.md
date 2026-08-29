@@ -142,12 +142,12 @@ kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_P
 
 Plans are limited to 10 actions, 30 seconds total, and 5 seconds per held key. Use only validated key names/chords and bounded mouse/text actions. Named workflows use `workflow-list`, `workflow-inspect`, and `workflow-execute`; always copy the current revision from inspection and provide the expected target. A target-independent workflow must still be bound to an explicit target at invocation.
 
-The executor aborts on a target/session mismatch, changed plan hash, expired authorization, lock conflict, deadline, or unexpected state. It releases all keys, closes streams it owns, and releases the device lock on every exit path. Check `ok`, `completed_steps`, `cleanup_ok`, and `cleanup_errors` in the JSON result before retrying. Do not put passwords, tokens, cookies, authorization headers, or secrets in plans, logs, or screenshots; journal and inspection output is redacted.
+The executor aborts on a target/session mismatch, changed plan hash, expired authorization, deadline, or unexpected state. A lock-conflict rejection occurs before this invocation owns the device lock or any keys, so it records the abort and returns without performing ownership cleanup; all paths after lock ownership release keys, close streams they own, and release the device lock. Check `ok`, `completed_steps`, `cleanup_ok`, and `cleanup_errors` in the JSON result before retrying. Do not put passwords, tokens, cookies, authorization headers, or secrets in plans, logs, or screenshots; journal, result, and inspection output is redacted.
 
 KVM sequence keyboard actions are HID events delivered to the selected machine. `exec-command` is not a keyboard shortcut: it is a separate SSH operation restricted to the configured base-command allowlist, explicit `transport=ssh`, and write authorization. Never use it as a way to bypass the KVM target boundary.
 
 ## Verification record
 
-- Full repository suite: **142 passed, 3 skipped**.
+- Full repository suite: **256 passed, 3 skipped**.
 - Live reusable CLI selection: **pve2 selected and verified**; visible evidence showed `https://192.168.42.4:8006/` and `pve2 login:`.
 - The device-specific port mapping and protocol timings are recorded in [`../PROBE_NOTES.md`](../PROBE_NOTES.md).
