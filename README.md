@@ -153,6 +153,22 @@ PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_live_hardware.py
 
 Install the optional MCP adapter with `.venv/bin/pip install -e '.[mcp]'`, then configure an MCP client to launch `kvmctl-mcp`. It uses `KVMCTL_URL` and `KVMCTL_TOKEN` (or the optional login variables), is read-only by default, and returns snapshots as native MCP image content. Writes require `KVMCTL_WRITE_ENABLED=1` plus each operation's transport and policy requirements. See [`docs/MCP.md`](docs/MCP.md).
 
+## Target-bound sequences and named workflows
+
+Sequences are declarative, target-bound plans. The safe lifecycle is **plan → authorize → execute**:
+
+```sh
+kvmctl --url "$KVM_URL" sequence-plan --plan ./plan.json
+kvmctl --url "$KVM_URL" --yes sequence-authorize --plan ./plan.json --ttl 30
+kvmctl --url "$KVM_URL" --yes sequence-execute --plan ./plan.json --ttl 30
+```
+
+`sequence-plan` is read-only. Authorization and execution require `--yes`, and every invocation must use the already selected and verified target session; a target mismatch, stale plan hash, expired authorization, or unexpected screen aborts before further input. Plans are bounded to at most 10 actions, 30 seconds total, and 5 seconds per held key. Supported actions include text, validated key chords, bounded key holds, release-all, mouse movement/click/scroll, and waits. Results contain a plan hash, target, progress, and cleanup status, never plan secrets.
+
+For repeatable operations, use the named workflow commands `workflow-list`, `workflow-inspect NAME [--revision REVISION] [--target TARGET]`, and `workflow-execute NAME --revision REVISION [--target TARGET]`. Workflow revisions are derived from the canonical name, target binding, and plan; callers must supply the current revision. Workflows are listed in deterministic name order and inspection redacts secret-like text. Target-independent workflows still require an explicit invocation target and are bound to it before execution.
+
+The executor aborts on every unexpected state and records bounded, deterministic journal checkpoints. Keyboard actions send KVM HID input to the selected target. `exec-command` is different: it runs an explicitly allowlisted SSH `exec-command` transport and never types a shell command through the KVM keyboard. All execution paths release held keys, close an owned stream, release the device lock, and report cleanup failures.
+
 ## Development
 
 ```sh

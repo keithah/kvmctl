@@ -127,6 +127,25 @@ The CLI now provides `send-text`, `send-keys`, `hold-key`, `release-all`, `mouse
 - Use `ControlRight`, never `ControlLeft`, for the TH41-3 protocol.
 - Unknown or disabled machine names must not generate HID traffic.
 
+## Target-bound sequence operations
+
+Use the same three-stage safety boundary for every declarative sequence: plan it, explicitly authorize it, then execute it only after the target is selected and visually verified.
+
+```sh
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure sequence-plan --plan ./plan.json
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes sequence-authorize --plan ./plan.json --ttl 30
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes sequence-execute --plan ./plan.json --ttl 30
+```
+
+Plans are limited to 10 actions, 30 seconds total, and 5 seconds per held key. Use only validated key names/chords and bounded mouse/text actions. Named workflows use `workflow-list`, `workflow-inspect`, and `workflow-execute`; always copy the current revision from inspection and provide the expected target. A target-independent workflow must still be bound to an explicit target at invocation.
+
+The executor aborts on a target/session mismatch, changed plan hash, expired authorization, lock conflict, deadline, or unexpected state. It releases all keys, closes streams it owns, and releases the device lock on every exit path. Check `ok`, `completed_steps`, `cleanup_ok`, and `cleanup_errors` in the JSON result before retrying. Do not put passwords, tokens, cookies, authorization headers, or secrets in plans, logs, or screenshots; journal and inspection output is redacted.
+
+KVM sequence keyboard actions are HID events delivered to the selected machine. `exec-command` is not a keyboard shortcut: it is a separate SSH operation restricted to the configured base-command allowlist, explicit `transport=ssh`, and write authorization. Never use it as a way to bypass the KVM target boundary.
+
 ## Verification record
 
 - Full repository suite: **142 passed, 3 skipped**.

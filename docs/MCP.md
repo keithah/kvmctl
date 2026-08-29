@@ -1,6 +1,6 @@
 # MCP server
 
-`kvmctl-mcp` is an MCP stdio server around the same `SemanticSurface` used by the CLI and internal JSON dispatcher. It exposes semantic operations only; it does not provide arbitrary KVMD API, keyboard, mouse, or shell passthrough.
+`kvmctl-mcp` is an MCP stdio server around the same `SemanticSurface` used by the CLI and internal JSON dispatcher. It exposes semantic operations only; it does not provide arbitrary KVMD API or shell passthrough. Guarded KVM keyboard and mouse actions are available through the allowlisted tools below.
 
 The GLKVM can pass keyboard input through to the currently selected target, and the low-level Python `KvmClient` exposes `key_down()`, `key_up()`, `press_key()`, and `type_text()`. The MCP server now exposes guarded equivalents as `kvm_send_text`, `kvm_send_keys`, `kvm_hold_key`, and `kvm_release_all`, plus mouse and OCR-targeting tools listed below. Its `select` tool still sends only the configured switch-selection sequence.
 
@@ -75,6 +75,11 @@ The registered tools are:
 - `service.render_access.inspect` — inspect service and render-node access.
 - `host.reboot` — perform the authorized host reboot lifecycle with checkpoint verification.
 - `exec_command` — compatibility surface for explicitly allowlisted SSH commands.
+- `kvm_sequence_plan` — validate a bounded target-bound plan (read-only).
+- `kvm_sequence_authorize` — authorize a plan with explicit approval and bounded TTL.
+- `kvm_sequence_execute` — execute an authorized target-bound plan with cleanup.
+- `kvm_workflow_list` / `kvm_workflow_inspect` — list or inspect redacted named workflow revisions (read-only).
+- `kvm_workflow_execute` — resolve a named revision, bind its target, and execute it.
 
 Safety rules:
 
@@ -82,7 +87,9 @@ Safety rules:
 - `select`, `hid_reset`, and `rearm_otg` require `KVMCTL_WRITE_ENABLED=1`; `select` also requires `transport="kvm"`.
 - `host.reboot` requires write authorization, a configured host runner, and a confirmation token bound to the requested target.
 - `exec_command` requires write authorization, explicit `transport="ssh"`, and a command whose base executable is in `KVMCTL_SSH_ALLOWLIST`; shell operators and substitutions are rejected.
+- Sequence authorization/execution require write authorization and an explicit approval. Plans allow at most 10 actions, 30 seconds total, and 5 seconds per held key. The executor rechecks target/session binding, revision/hash, expiry, and state at the execution boundary; unexpected state aborts.
+- Sequence and workflow results expose bounded evidence and cleanup status. Held keys are released, owned streams are closed, and device locks are released on success, failure, timeout, cancellation, or rejected execution. Journal output is deterministic and redacts sensitive fields.
 - Named host operations use internally generated argv only; MCP callers cannot submit arbitrary host commands through those operations.
 - Live hardware tests remain opt-in and are separate from the normal test suite.
 
-The write gate is intentionally process-wide for a stdio server. Run a separate read-only process when integrating with an untrusted or shared client. For a complete operational selection example, see [`OPERATOR_RUNBOOK.md`](OPERATOR_RUNBOOK.md).
+The write gate is intentionally process-wide for a stdio server. Run a separate read-only process when integrating with an untrusted or shared client. KVM sequence actions send HID keyboard/mouse input to the currently verified target; `exec_command` is a separate allowlisted SSH transport and does not type commands through that keyboard. For a complete operational selection and sequence example, see [`OPERATOR_RUNBOOK.md`](OPERATOR_RUNBOOK.md).
