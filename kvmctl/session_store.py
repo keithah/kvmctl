@@ -1,6 +1,6 @@
 """Tamper-evident persistence for verified sessions and capabilities."""
 from __future__ import annotations
-import hashlib, hmac, json, os, pathlib, stat, tempfile, time, errno
+import hashlib, hmac, json, math, os, pathlib, stat, tempfile, time, errno
 from contextlib import contextmanager
 import fcntl
 from .machines import SelectionRecord, SelectionState, SessionState
@@ -181,12 +181,26 @@ class FileAuthorizationStore:
                 p = next((item for item in records if item["token"] == token), None)
                 if p is None or p["used"]: return None
                 if binding is not None and not hmac.compare_digest(str(p.get("binding", "")), str(binding)): return None
+                from .sequences import plan_hash, validate_plan
+                from .sequence_executor import SequenceAuthorization
+                plan = validate_plan(p["plan"])
+                if p["target"] != plan.target:
+                    return None
+                capability_hash = p["plan_hash"]
+                if (not isinstance(capability_hash, str)
+                        or not hmac.compare_digest(plan_hash(plan), capability_hash)):
+                    return None
+                expires_at = p["expires_at"]
+                if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+                    return None
+                expires_at = float(expires_at)
+                if not math.isfinite(expires_at):
+                    return None
+                auth = SequenceAuthorization(plan, p["target"], capability_hash, expires_at,
+                    p.get("workflow_revision"), token=token, binding=p.get("binding", ""))
                 if consume:
                     p["used"] = True; self._write_records(records)
-                from .sequences import validate_plan
-                from .sequence_executor import SequenceAuthorization
-                return SequenceAuthorization(validate_plan(p["plan"]), p["target"], p["plan_hash"],
-                    float(p["expires_at"]), p.get("workflow_revision"), token=token, binding=p.get("binding", ""))
+                return auth
             except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                 return None
 

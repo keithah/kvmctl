@@ -2,10 +2,14 @@
 
 Implemented one fix wave for authorization, screen assertions, and journal evidence.
 
+## Capability validation-before-consumption remediation
+
+`FileAuthorizationStore.take()` now validates the decoded plan, target binding, canonical plan hash, and finite expiry before marking a capability used or rewriting the store. MAC-valid malformed capabilities remain unchanged and valid one-time capabilities retain their existing consume-once behavior.
+
 ## Verification
 
-- `.venv/bin/python -m pytest tests/test_final_review_remediation.py tests/test_screen_assertion.py -q` — `3 passed`
-- `.venv/bin/python -m pytest tests/test_final_review_remediation.py tests/test_screen_assertion.py tests/test_sequence_semantics.py -q` — `12 passed`
+- `.venv/bin/python -m pytest tests/test_persistence_hardening.py -q` — `9 passed`
+- `.venv/bin/python -m pytest tests -q` — `308 passed, 3 skipped`
 - `.venv/bin/python -m compileall -q kvmctl tests` — exit 0
 - `git diff --check` — exit 0
 

@@ -1,12 +1,13 @@
-import os, stat
+import hashlib, hmac, json, os, stat
+import pytest
 from kvmctl.session_store import FileAuthorizationStore
 from kvmctl.sequence_executor import SequenceAuthorization
-from kvmctl.sequences import SequencePlan
+from kvmctl.sequences import SequencePlan, plan_hash
 
 
 def auth(token):
     p = SequencePlan.from_mapping({'target':'pve2','actions':[{'type':'release_all'}]})
-    return SequenceAuthorization(p, 'pve2', 'sha256:x', 999, token=token, binding='b')
+    return SequenceAuthorization(p, 'pve2', plan_hash(p), 999, token=token, binding='b')
 
 
 def test_store_preserves_multiple_capabilities_and_consumes_once(tmp_path):
@@ -50,6 +51,38 @@ def test_atomic_write_rejects_symlink_target(tmp_path):
     else:
         raise AssertionError("symlink target accepted")
     assert target.read_text() == "keep"
+
+
+def _rewrite_payload(path, keypath, update):
+    envelope = json.loads(path.read_text())
+    payloads = envelope["payloads"]
+    update(payloads[0])
+    raw = json.dumps(payloads, sort_keys=True, separators=(",", ":")).encode()
+    envelope["mac"] = hmac.new(keypath.read_bytes(), raw, hashlib.sha256).hexdigest()
+    path.write_text(json.dumps(envelope, sort_keys=True))
+
+
+def test_mac_valid_malformed_capability_is_not_consumed_or_rewritten(tmp_path):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path))
+    store.put(auth("keep"))
+    original = path.read_bytes()
+    _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(plan_hash=123))
+    malformed = path.read_bytes()
+    assert store.take("keep", binding="b") is None
+    assert path.read_bytes() == malformed
+    assert path.read_bytes() != original
+
+
+@pytest.mark.parametrize("expiry", [float("nan"), float("inf"), float("-inf")])
+def test_mac_valid_nonfinite_expiry_is_not_consumed_or_rewritten(tmp_path, expiry):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path))
+    store.put(auth("keep"))
+    _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=expiry))
+    original = path.read_bytes()
+    assert store.take("keep", binding="b") is None
+    assert path.read_bytes() == original
 
 
 def test_tampered_store_fails_closed_and_does_not_overwrite(tmp_path):
