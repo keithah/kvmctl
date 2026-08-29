@@ -24,3 +24,21 @@ exit 0
 - Added compatibility filtering for legacy thin CLI adapters without changing the real semantic authorization gate.
 - Extended rejection journal records with final result, timestamp, and duration evidence.
 - Migrated regression tests to the plan -> authorize -> execute lifecycle and covered the public workflow authorization tool registry.
+
+## Final safety-gap verification (2026-08-28)
+
+```text
+Focused final safety-gap and sequence tests:
+46 passed in 0.15s
+
+Full suite:
+263 passed, 3 skipped in 23.20s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```
+
+Final gap coverage includes endpoint/session-derived authorization binding, flock-protected atomic single-use consumption, bounded screen assertion capture/OCR with fail-closed behavior and exact authorized journal binding, and centralized aborted checkpoints for pre-execution rejection paths.

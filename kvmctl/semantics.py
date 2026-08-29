@@ -407,6 +407,9 @@ class SemanticSurface:
                 # Preserve deterministic plan/target errors ahead of the
                 # missing-token error, without authorizing or executing.
                 self._validated_sequence_record(plan)
+            target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
+            self.sequence_executor.reject("authorization missing", target=target,
+                                          plan_hash_value=plan_hash(validate_plan(plan)) if plan is not None else "")
             raise ValueError("approval_token is required; authorize the exact plan first")
         expected = validate_plan(plan) if plan is not None else None
         result = self.sequence_executor.execute(approval_token, expected_plan=expected)
@@ -457,6 +460,8 @@ class SemanticSurface:
                 if definition.name == name and not definition.target_independent: invocation_target = definition.target
         workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
         if not approval_token:
+            self.sequence_executor.reject("authorization missing", target=invocation_target or workflow.target,
+                                          plan_hash_value=plan_hash(workflow.plan))
             raise ValueError("approval_token is required; authorize the exact workflow first")
         result = self.sequence_executor.execute(
             approval_token, expected_plan=workflow.plan,
