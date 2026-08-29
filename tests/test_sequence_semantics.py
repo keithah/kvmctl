@@ -78,6 +78,26 @@ def test_sequence_authorize_and_execute_require_write_gate():
     assert executed["evidence"]["completed_steps"] == 1
 
 
+def test_sequence_authorize_rejects_non_boolean_approval_before_executor():
+    executor = FakeExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+
+    with pytest.raises(TypeError, match="approved"):
+        surf.kvm_sequence_authorize(PLAN, approved="false")
+
+    assert executor.authorizations == []
+
+
+def test_sequence_authorize_rejects_fractional_ttl_before_executor():
+    executor = FakeExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+
+    with pytest.raises(ValueError, match="ttl"):
+        surf.kvm_sequence_authorize(PLAN, approved=True, ttl_s=1.5)
+
+    assert executor.authorizations == []
+
+
 def test_inline_and_named_workflow_share_executor_and_envelope():
     raw = {"name": "hello", "target": "pve1", "steps": PLAN["actions"]}
     repository = WorkflowRepository.from_mappings([raw])

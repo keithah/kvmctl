@@ -80,6 +80,26 @@ def test_rejects_unverified_or_mismatched_target_and_expired_authorization(tmp_p
     assert not result.ok and "expired" in result.error
 
 
+def test_authorize_rejects_non_boolean_approval(tmp_path):
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]})
+
+    with pytest.raises(TypeError, match="approved"):
+        ex.authorize(planned, approved="false")
+
+
+@pytest.mark.parametrize("ttl", [1.5, 1.0])
+def test_authorize_requires_integral_ttl(tmp_path, ttl):
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]})
+
+    if ttl == 1.0:
+        assert ex.authorize(planned, approved=True, ttl_s=ttl).token
+    else:
+        with pytest.raises(ValueError, match="ttl"):
+            ex.authorize(planned, approved=True, ttl_s=ttl)
+
+
 @pytest.mark.parametrize("ttl", [float("nan"), float("inf"), float("-inf"), 30.001])
 def test_authorize_rejects_nonfinite_and_overlong_ttl(tmp_path, ttl):
     ex = make_executor(tmp_path)

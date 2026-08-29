@@ -163,3 +163,9 @@ Focused remediation tests: 76 passed
 The direct MCP dispatcher now requires non-empty workflow name and revision strings, exact boolean approval, non-empty optional targets, and finite integral TTL values within the 30-second authorization policy. It no longer coerces approval or TTL values, and missing approval is rejected before reaching the semantic authorization gate. Added regressions for string approval, missing/null and malformed fields, fractional/non-finite TTLs, and valid explicit authorization.
 
 Verification: `tests/test_sequence_mcp.py` — `30 passed`; full suite — `336 passed, 3 skipped`; compileall and `git diff --check` — exit 0.
+
+## Semantic/executor authorization scalar validation remediation (2026-08-29)
+
+The semantic authorization boundary and `SequenceExecutor.authorize()` now require exact boolean approval and finite, integral, positive TTL values no greater than the 30-second policy maximum. MCP sequence authorization (including inline plans) applies the same integral bounded TTL validation and forwards values without coercion. Malformed authorization inputs are rejected before executor authorization; valid integer-valued controls remain accepted. Added direct semantic, executor, and inline MCP regressions with valid controls.
+
+Verification: focused semantic/executor/MCP tests — `74 passed in 0.32s`; full suite — `342 passed, 3 skipped in 23.19s`; compileall and `git diff --check` — exit 0.

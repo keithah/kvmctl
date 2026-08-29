@@ -112,8 +112,10 @@ def _validate_sequence_arguments(name: str, arguments: dict) -> None:
             raise TypeError("invalid argument approved: expected boolean")
         if "ttl_s" in arguments:
             ttl = arguments["ttl_s"]
-            if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
-                raise TypeError("invalid argument ttl_s: expected finite number")
+            if (isinstance(ttl, bool) or not isinstance(ttl, (int, float))
+                    or not math.isfinite(ttl) or not float(ttl).is_integer()
+                    or not 0 < ttl <= SequenceExecutor.MAX_AUTHORIZATION_TTL_S):
+                raise TypeError("invalid argument ttl_s: expected integral finite number in authorization limit")
         if "approval_token" in arguments and not isinstance(arguments["approval_token"], str):
             raise TypeError("invalid argument approval_token: expected string")
     if name == "kvm_workflow_inspect":
@@ -149,8 +151,10 @@ def _validate_sequence_arguments(name: str, arguments: dict) -> None:
             raise TypeError("invalid argument approved: expected boolean")
         if "ttl_s" in arguments:
             ttl = arguments["ttl_s"]
-            if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
-                raise TypeError("invalid argument ttl_s: expected finite number")
+            if (isinstance(ttl, bool) or not isinstance(ttl, (int, float))
+                    or not math.isfinite(ttl) or not float(ttl).is_integer()
+                    or not 0 < ttl <= SequenceExecutor.MAX_AUTHORIZATION_TTL_S):
+                raise TypeError("invalid argument ttl_s: expected integral finite number in authorization limit")
         if "approval_token" in arguments and not isinstance(arguments["approval_token"], str):
             raise TypeError("invalid argument approval_token: expected string")
 
@@ -173,7 +177,7 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                 out = surf.kvm_sequence_plan(_decode_plan(arguments))
             elif name == "kvm_sequence_authorize":
                 out = surf.kvm_sequence_authorize(_decode_plan(arguments),
-                    approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
+                    approved=arguments.get("approved", False), ttl_s=arguments.get("ttl_s", 30.0))
             elif name == "kvm_sequence_execute":
                 out = surf.kvm_sequence_execute(
                     _decode_plan(arguments) if ("plan" in arguments or "plan_b64" in arguments or "target" in arguments or "actions" in arguments) else None,
@@ -189,8 +193,8 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                 out = surf.kvm_workflow_inspect(arguments["name"], arguments.get("revision"), arguments.get("target"))
             else:
                 out = surf.kvm_workflow_execute(arguments["name"], arguments["revision"],
-                    approved=bool(arguments.get("approved", False)), approval_token=arguments.get("approval_token"), target=arguments.get("target"),
-                    ttl_s=float(arguments.get("ttl_s", 30.0)))
+                    approved=arguments.get("approved", False), approval_token=arguments.get("approval_token"), target=arguments.get("target"),
+                    ttl_s=arguments.get("ttl_s", 30.0))
             return json.dumps(out)
         if name == "capabilities":
             out = surf.capabilities()

@@ -206,12 +206,15 @@ class SequenceExecutor:
 
     def authorize(self, planned: SequencePlanRecord, *, approved: bool,
                   ttl_s: float = 30.0) -> SequenceAuthorization:
+        if type(approved) is not bool:
+            raise TypeError("approved must be a boolean")
         if not approved:
             self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
                         reason="plan must be approved")
             raise ValueError("plan must be approved")
         if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
                 or not math.isfinite(ttl_s)
+                or not float(ttl_s).is_integer()
                 or not (0 < ttl_s <= self.MAX_AUTHORIZATION_TTL_S)):
             self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
                         reason="authorization ttl invalid")

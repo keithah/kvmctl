@@ -10,6 +10,7 @@ semantic operations below exist.
 from __future__ import annotations
 
 import base64
+import math
 import os
 import tempfile
 from dataclasses import replace
@@ -399,6 +400,15 @@ class SemanticSurface:
             except BaseException:
                 pass
 
+    @staticmethod
+    def _validate_authorization_inputs(approved, ttl_s) -> None:
+        if type(approved) is not bool:
+            raise TypeError("approved must be a boolean")
+        if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
+                or not math.isfinite(ttl_s) or not float(ttl_s).is_integer()
+                or not 0 < ttl_s <= SequenceExecutor.MAX_AUTHORIZATION_TTL_S):
+            raise ValueError("authorization ttl must be finite, integral, and between 0 and 30 seconds")
+
     def kvm_sequence_plan(self, plan) -> dict:
         try:
             planned = self.sequence_executor.plan(validate_plan(plan))
@@ -413,6 +423,7 @@ class SemanticSurface:
 
     def kvm_sequence_authorize(self, plan, *, approved: bool,
                                ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
         try:
             canonical_input = validate_plan(plan) if isinstance(plan, dict) else None
         except (TypeError, ValueError, KeyError):
@@ -491,6 +502,7 @@ class SemanticSurface:
 
     def kvm_workflow_authorize(self, name: str, revision: str, *, approved: bool,
                                target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():

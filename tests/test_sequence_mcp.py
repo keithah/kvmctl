@@ -65,6 +65,15 @@ def test_dispatch_sequence_accepts_inline_plan_with_control_fields(tmp_path, nam
     assert "ttl_s" not in out["evidence"]
 
 
+def test_dispatch_sequence_inline_authorize_rejects_fractional_ttl(tmp_path):
+    _, ctx = client_and_context(tmp_path, write_enabled=True)
+
+    out = call("kvm_sequence_authorize", {**plan(), "approved": True, "ttl_s": 1.5}, ctx)
+
+    assert out["ok"] is False
+    assert "invalid argument" in out["error"]["code"]
+
+
 def test_dispatch_sequence_rejects_unknown_inline_plan_field(tmp_path):
     _, ctx = client_and_context(tmp_path, write_enabled=True)
     out = call("kvm_sequence_execute", {**plan(), "approvald": True}, ctx)
