@@ -30,7 +30,7 @@ WRITE_OPERATIONS = frozenset({
     "kvm_send_text", "kvm_send_keys", "kvm_hold_key", "kvm_release_all",
     "kvm_mouse_move", "kvm_mouse_move_pct", "kvm_mouse_click", "kvm_mouse_scroll",
     "kvm_ocr_click",
-    "kvm_sequence_authorize", "kvm_sequence_execute", "kvm_workflow_execute",
+    "kvm_sequence_authorize", "kvm_sequence_execute", "kvm_workflow_authorize", "kvm_workflow_execute",
 })
 
 

@@ -316,6 +316,10 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
     except PolicyError as exc:
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                              "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+            try:
+                surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+            except Exception:
+                pass
             out = _sequence_error(args.command, exc)
         else:
             print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
@@ -323,11 +327,21 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                              "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+            try:
+                surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+            except Exception:
+                pass
             out = _sequence_error(args.command, exc)
         else:
             raise
     except SystemExit as exc:
         if isinstance(exc.code, str):
+            if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                                 "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+                try:
+                    surf.sequence_executor.reject(exc.code, target=getattr(args, "target", None))
+                except Exception:
+                    pass
             print(exc.code, file=sys.stderr)
             raise SystemExit(2)
         raise
@@ -342,6 +356,10 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         except OSError as exc:
             if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                                  "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+                try:
+                    surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+                except Exception:
+                    pass
                 out = _sequence_error(args.command, exc)
                 rendered = json.dumps(out)
             else:

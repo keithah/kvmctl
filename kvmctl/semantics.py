@@ -379,6 +379,15 @@ class SemanticSurface:
             raise ValueError("target mismatch or session not verified")
         return planned
 
+    def _sequence_write_gate(self, operation: str, *, target=None, plan_hash_value="") -> None:
+        try:
+            self.policy.require_write(operation)
+        except PolicyError as exc:
+            reject = getattr(self.sequence_executor, "reject", None)
+            if reject is not None:
+                reject(str(exc), target=target, plan_hash_value=plan_hash_value)
+            raise
+
     def kvm_sequence_plan(self, plan) -> dict:
         planned = self.sequence_executor.plan(validate_plan(plan))
         return self._sequence_envelope(
@@ -388,7 +397,8 @@ class SemanticSurface:
 
     def kvm_sequence_authorize(self, plan, *, approved: bool,
                                ttl_s: float = 30.0) -> dict:
-        self.policy.require_write("kvm_sequence_authorize")
+        target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
+        self._sequence_write_gate("kvm_sequence_authorize", target=target)
         planned = self._validated_sequence_record(plan)
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
         result = self._sequence_envelope(
@@ -401,7 +411,8 @@ class SemanticSurface:
 
     def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
                              approved: bool = False, ttl_s: float = 30.0) -> dict:
-        self.policy.require_write("kvm_sequence_execute")
+        target = plan.get("target") if isinstance(plan, dict) else getattr(plan, "target", None)
+        self._sequence_write_gate("kvm_sequence_execute", target=target)
         if not approval_token:
             if plan is not None:
                 # Preserve deterministic plan/target errors ahead of the
@@ -438,12 +449,16 @@ class SemanticSurface:
 
     def kvm_workflow_authorize(self, name: str, revision: str, *, approved: bool,
                                target: str | None = None, ttl_s: float = 30.0) -> dict:
-        self.policy.require_write("kvm_sequence_authorize")
+        self._sequence_write_gate("kvm_sequence_authorize", target=target)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():
                 if definition.name == name and not definition.target_independent: invocation_target = definition.target
-        workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        try:
+            workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        except (TypeError, ValueError, KeyError) as exc:
+            self.sequence_executor.reject(str(exc), target=invocation_target)
+            raise
         actual = invocation_target or workflow.target
         bound = workflow.plan if workflow.plan.target == actual else replace(workflow.plan, target=actual)
         auth = self.sequence_executor.authorize(self.sequence_executor.plan(bound, workflow_revision=workflow.revision), approved=approved, ttl_s=ttl_s)
@@ -453,12 +468,16 @@ class SemanticSurface:
 
     def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool = False,
                              approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict:
-        self.policy.require_write("kvm_workflow_execute")
+        self._sequence_write_gate("kvm_workflow_execute", target=target)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():
                 if definition.name == name and not definition.target_independent: invocation_target = definition.target
-        workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        try:
+            workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        except (TypeError, ValueError, KeyError) as exc:
+            self.sequence_executor.reject(str(exc), target=invocation_target)
+            raise
         if not approval_token:
             self.sequence_executor.reject("authorization missing", target=invocation_target or workflow.target,
                                           plan_hash_value=plan_hash(workflow.plan))

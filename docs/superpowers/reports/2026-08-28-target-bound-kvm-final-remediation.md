@@ -42,3 +42,21 @@ exit 0
 ```
 
 Final gap coverage includes endpoint/session-derived authorization binding, flock-protected atomic single-use consumption, bounded screen assertion capture/OCR with fail-closed behavior and exact authorized journal binding, and centralized aborted checkpoints for pre-execution rejection paths.
+
+## Final follow-up verification (2026-08-28)
+
+```text
+Persistence/journal/deadline focused tests:
+52 passed in 0.17s
+
+Full suite:
+265 passed, 3 skipped in 23.06s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```
+
+Follow-up changes harden session, key, lock, temporary, and authorization files with fail-closed owner/mode checks; preserve multiple persisted capabilities with atomic flock-protected append/consume; journal semantic policy, workflow-resolution, and adapter rejection paths; use non-empty deterministic rejection evidence identifiers; and fail immediately when screen capture/OCR deadlines expire.

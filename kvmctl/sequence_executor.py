@@ -122,9 +122,15 @@ class SequenceExecutor:
         return "sha256:" + hashlib.sha256(material.encode()).hexdigest()
 
     def reject(self, reason: str, *, target=None, plan_hash_value="", start=None) -> None:
+        # Rejections may happen before a canonical plan exists, but the journal
+        # still gets a non-empty, deterministic evidence identifier.
+        if not plan_hash_value:
+            plan_hash_value = "sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest()
+        ended = time.time()
+        began = self.clock() if start is None else start
         self._checkpoint("aborted", target=target, plan_hash=plan_hash_value,
-                         reason=reason, final_result="failure", ended_at=time.time(),
-                         duration_ms=max(0, int((self.clock() - (start or self.clock())) * 1000)))
+                         reason=reason, final_result="failure", started_at=began,
+                         ended_at=ended, duration_ms=max(0, int((self.clock() - began) * 1000)))
 
     def _checkpoint(self, transition: str, *, target: str | None, plan_hash: str, **details) -> None:
         current = self.session.current
@@ -365,13 +371,17 @@ class SequenceExecutor:
         ocr = getattr(self.client, "ocr", None)
         if snapshot is None or ocr is None:
             raise RuntimeError("screen assertion unavailable")
-        remaining = max(0.001, (self._active_deadline or (self.clock() + 1.0)) - self.clock())
+        remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
+        if remaining <= 0:
+            raise TimeoutError("sequence deadline expired")
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             frame = executor.submit(snapshot).result(timeout=remaining)
             if not isinstance(frame, (bytes, bytearray)) or len(frame) > self.SCREEN_MAX_BYTES:
                 raise RuntimeError("screen assertion unavailable")
-            remaining = max(0.001, (self._active_deadline or (self.clock() + 1.0)) - self.clock())
+            remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
+            if remaining <= 0:
+                raise TimeoutError("sequence deadline expired")
             text = executor.submit(ocr, bytes(frame)).result(timeout=remaining)
         except (FutureTimeout, TimeoutError, OSError, ValueError, TypeError) as exc:
             raise RuntimeError("screen assertion unavailable") from exc

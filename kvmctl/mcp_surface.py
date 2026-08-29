@@ -277,6 +277,10 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
     except Exception as exc:
         # Policy refusals and device errors become structured payloads, never raises.
         if name in _SEQUENCE_TOOLS:
+            try:
+                surf.sequence_executor.reject(str(exc), target=arguments.get("target"))
+            except Exception:
+                pass
             return _sequence_error(name, exc)
         out = {"operation": name, "ok": False, "error": str(exc)[:300]}
     return json.dumps(out)
