@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from kvmctl.journal import Journal
@@ -98,3 +100,69 @@ def test_workflow_revision_is_bound(tmp_path):
     auth = ex.execute_workflow(definition, approved=True)
     assert isinstance(auth, SequenceExecutionResult)
     assert auth.ok
+
+
+def test_changed_hash_and_authorization_target_are_rejected(tmp_path):
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]})
+    auth = ex.authorize(planned, approved=True)
+    object.__setattr__(auth, "plan_hash", "sha256:changed")
+    result = ex.execute(auth)
+    assert not result.ok and result.error == "plan hash changed"
+    with pytest.raises(ValueError, match="target mismatch"):
+        SequenceAuthorization(planned.plan, "pve1", planned.plan_hash, 30)
+
+
+def test_lock_conflict_is_journaled_and_deadline_checked_after_last_action(tmp_path):
+    client = FakeClient()
+    ex = make_executor(tmp_path, client)
+    ex.device_id = "shared-test-lock"
+    lock = __import__("kvmctl.machines", fromlist=["device_lock"]).device_lock(ex.device_id)
+    assert lock.acquire(blocking=False)
+    try:
+        result = ex.execute(ex.authorize(ex.plan({"target":"pve2", "actions":[{"type":"release_all"}]}), approved=True))
+        assert result.error == "device lock conflict"
+    finally:
+        lock.release()
+    ticks = iter([0.0, 0.0, 0.0, 0.002, 0.002])
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "deadline.jsonl"),
+                          clock=lambda: next(ticks), sleep=lambda _: None,
+                          device_id="deadline-test")
+    plan = ex.plan({"target":"pve2", "max_duration_ms": 1, "actions":[{"type":"release_all"}]})
+    result = ex.execute(ex.authorize(plan, approved=True))
+    assert not result.ok and result.error == "deadline exceeded"
+
+
+def test_cancellation_attempts_all_cleanup_and_redacts_exception(tmp_path):
+    class CancelClient(FakeClient):
+        def key_down(self, key):
+            self.calls.append(("key_down", key))
+            raise KeyboardInterrupt("contains secret-token")
+        def release_all(self):
+            self.calls.append(("release_all",))
+            raise KeyboardInterrupt("cleanup secret")
+        def close_stream(self):
+            self.calls.append(("close_stream",))
+            raise KeyboardInterrupt("stream secret")
+
+    client = CancelClient()
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "cancel.jsonl"),
+                          clock=lambda: 0.0, sleep=lambda _: None, device_id="cancel-test")
+    plan = ex.plan({"target":"pve2", "actions":[{"type":"key", "value":"Enter"}]})
+    result = ex.execute(ex.authorize(plan, approved=True))
+    assert result.error == "cancelled"
+    assert result.cleanup_errors == ("release_all failed", "close_stream failed")
+    assert ("release_all",) in client.calls and ("close_stream",) in client.calls
+    text = (tmp_path / "cancel.jsonl").read_text()
+    assert "secret" not in text and "contains" not in text
+
+
+def test_workflow_revision_mismatch_is_aborted(tmp_path):
+    from kvmctl.workflows import WorkflowDefinition
+    workflow = WorkflowDefinition.from_mapping({"name":"demo2", "target":"pve2", "steps":[{"type":"release_all"}]})
+    object.__setattr__(workflow, "revision", "sha256:changed")
+    ex = make_executor(tmp_path)
+    with pytest.raises(ValueError, match="workflow revision mismatch"):
+        ex.execute_workflow(workflow, approved=True)
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"

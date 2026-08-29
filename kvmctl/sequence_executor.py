@@ -1,7 +1,7 @@
 """Target-bound, explicitly-dispatched KVM sequence execution."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import time
 from typing import Callable, Optional
 
@@ -30,6 +30,10 @@ class SequenceAuthorization:
     expires_at: float
     workflow_revision: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.plan.target != self.target:
+            raise ValueError("authorization plan target mismatch")
+
 
 @dataclass
 class SequenceExecutionResult:
@@ -43,14 +47,62 @@ class SequenceExecutionResult:
     cleanup_errors: tuple[str, ...] = ()
 
 
+def _failure_reason(exc: BaseException, *, phase: str = "action") -> str:
+    """Return a bounded reason that never includes an exception message."""
+    if isinstance(exc, (KeyboardInterrupt, GeneratorExit, asyncio_cancelled_type())):
+        return "cancelled"
+    if isinstance(exc, TimeoutError):
+        return "deadline exceeded"
+    return f"{phase} failed"
+
+
+def asyncio_cancelled_type():
+    # Import lazily so this module remains usable in minimal environments.
+    try:
+        import asyncio
+        return asyncio.CancelledError
+    except ImportError:  # pragma: no cover
+        return type(None)
+
+
 class SequenceExecutor:
     def __init__(self, client, session: SessionState, journal: Journal,
                  *, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
-                 device_id: str = "default", stream_owned: bool = False):
+                 device_id: str | None = None, stream_owned: bool = False):
         self.client, self.session, self.journal = client, session, journal
-        self.clock, self.sleep, self.device_id = clock, sleep, device_id
+        self.clock, self.sleep = clock, sleep
+        # An explicit identity is preferred; a client-derived fallback avoids
+        # making unrelated client instances contend on one process-global key.
+        self.device_id = device_id if device_id is not None else self._client_identity(client)
         self.stream_owned = stream_owned
+        self._dispatch_table = {
+            "key": self._dispatch_key,
+            "text": self._dispatch_text,
+            "hold_key": self._dispatch_hold_key,
+            "release_all": self._dispatch_release_all,
+            "mouse_move": self._dispatch_mouse_move,
+            "mouse_move_pct": self._dispatch_mouse_move_pct,
+            "mouse_click": self._dispatch_mouse_click,
+            "mouse_scroll": self._dispatch_mouse_scroll,
+            "wait": self._dispatch_wait,
+        }
+
+    @staticmethod
+    def _client_identity(client) -> str:
+        for attr in ("base_url", "url", "host"):
+            value = getattr(client, attr, None)
+            if isinstance(value, str) and value:
+                return f"client:{attr}:{value}"
+        return f"client:{id(client)}"
+
+    def _checkpoint(self, transition: str, *, target: str, plan_hash: str, **details) -> None:
+        self.journal.checkpoint(operation="sequence", target=target, transition=transition,
+                                plan_hash=plan_hash, **details)
+
+    def _abort_preflight(self, authorization: SequenceAuthorization, reason: str) -> None:
+        self._checkpoint("aborted", target=authorization.target,
+                         plan_hash=authorization.plan_hash, reason=reason)
 
     def plan(self, plan: SequencePlan, *, workflow_revision: str | None = None) -> SequencePlanRecord:
         canonical = validate_plan(plan)
@@ -62,10 +114,9 @@ class SequenceExecutor:
         digest = plan_hash(canonical)
         record = SequencePlanRecord(canonical, canonical.target, digest, len(canonical.actions),
                                     canonical.max_duration_ms, workflow_revision=workflow_revision)
-        self.journal.checkpoint(operation="sequence", target=record.target, transition="planned",
-                                plan_hash=digest, action_count=record.action_count,
-                                max_duration_ms=record.max_duration_ms,
-                                workflow_revision=workflow_revision)
+        self._checkpoint("planned", target=record.target, plan_hash=digest,
+                         action_count=record.action_count, max_duration_ms=record.max_duration_ms,
+                         workflow_revision=workflow_revision)
         return record
 
     def authorize(self, planned: SequencePlanRecord, *, approved: bool,
@@ -77,9 +128,8 @@ class SequenceExecutor:
         now = self.clock()
         auth = SequenceAuthorization(planned.plan, planned.target, planned.plan_hash,
                                      now + ttl_s, planned.workflow_revision)
-        self.journal.checkpoint(operation="sequence", target=auth.target, transition="authorized",
-                                plan_hash=auth.plan_hash, expires_at=auth.expires_at,
-                                workflow_revision=auth.workflow_revision)
+        self._checkpoint("authorized", target=auth.target, plan_hash=auth.plan_hash,
+                         expires_at=auth.expires_at, workflow_revision=auth.workflow_revision)
         return auth
 
     def execute(self, authorization: SequenceAuthorization) -> SequenceExecutionResult:
@@ -88,94 +138,128 @@ class SequenceExecutor:
         lock = device_lock(self.device_id)
         if not lock.acquire(blocking=False):
             result.error = "device lock conflict"
+            self._abort_preflight(authorization, result.error)
             return result
-        owned_stream = self.stream_owned
         try:
+            # Repeat the binding checks at the side-effect boundary.
+            if authorization.plan.target != authorization.target:
+                result.error = "authorization target mismatch"
+                self._abort_preflight(authorization, result.error)
+                return result
             if self.clock() >= authorization.expires_at:
                 result.error = "authorization expired"
+                self._abort_preflight(authorization, result.error)
                 return result
             if plan_hash(authorization.plan) != authorization.plan_hash:
                 result.error = "plan hash changed"
+                self._abort_preflight(authorization, result.error)
                 return result
             current = self.session.current
             if current is None or not current.verified or current.machine != authorization.target:
                 result.error = "target mismatch or session not verified"
+                self._abort_preflight(authorization, result.error)
                 return result
-            self.journal.checkpoint(operation="sequence", target=authorization.target, transition="started",
-                                    plan_hash=authorization.plan_hash)
             deadline = start + authorization.plan.max_duration_ms / 1000.0
+            self._checkpoint("started", target=authorization.target, plan_hash=authorization.plan_hash)
             for index, action in enumerate(authorization.plan.actions):
                 if self.clock() >= deadline:
-                    raise TimeoutError("sequence deadline exceeded")
-                self.journal.checkpoint(operation="sequence", target=authorization.target, transition="step_started",
-                                        plan_hash=authorization.plan_hash, step=index)
+                    raise TimeoutError
+                self._checkpoint("step_started", target=authorization.target,
+                                 plan_hash=authorization.plan_hash, step=index)
                 self._dispatch(action)
                 result.completed_steps = index + 1
-                self.journal.checkpoint(operation="sequence", target=authorization.target, transition="step_completed",
-                                        plan_hash=authorization.plan_hash, step=index)
+                # Enforce the deadline after every action, including the last.
+                if self.clock() >= deadline:
+                    raise TimeoutError
+                self._checkpoint("step_completed", target=authorization.target,
+                                 plan_hash=authorization.plan_hash, step=index)
+            if self.clock() >= deadline:
+                raise TimeoutError
             result.ok = True
-            self.journal.checkpoint(operation="sequence", target=authorization.target, transition="completed",
-                                    plan_hash=authorization.plan_hash, steps=result.completed_steps)
+            self._checkpoint("completed", target=authorization.target,
+                             plan_hash=authorization.plan_hash, steps=result.completed_steps)
         except BaseException as exc:
-            result.error = "cancelled" if isinstance(exc, (KeyboardInterrupt, GeneratorExit)) else str(exc)[:300]
-            self.journal.checkpoint(operation="sequence", target=authorization.target, transition="aborted",
-                                    plan_hash=authorization.plan_hash, steps=result.completed_steps,
-                                    reason=result.error)
+            result.error = _failure_reason(exc)
+            self._abort_preflight(authorization, result.error)
         finally:
-            errors = []
+            cleanup_errors: list[str] = []
             try:
                 self.client.release_all()
-            except Exception as exc:
-                errors.append(str(exc)[:200])
-            if owned_stream:
-                try: self.client.close_stream()
-                except Exception as exc: errors.append(str(exc)[:200])
-            result.cleanup_errors = tuple(errors)
-            result.cleanup_ok = not errors
-            if errors:
+            except BaseException:
+                cleanup_errors.append("release_all failed")
+            try:
+                close_stream = getattr(self.client, "close_stream", None)
+                if close_stream is not None:
+                    close_stream()
+            except BaseException:
+                cleanup_errors.append("close_stream failed")
+            result.cleanup_errors = tuple(cleanup_errors)
+            result.cleanup_ok = not cleanup_errors
+            if cleanup_errors:
                 result.ok = False
-                self.journal.checkpoint(operation="sequence", target=authorization.target,
-                                        transition="cleanup_failed", plan_hash=authorization.plan_hash,
-                                        error_count=len(errors))
+                self._checkpoint("cleanup_failed", target=authorization.target,
+                                 plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
             result.elapsed_ms = max(0, int((self.clock() - start) * 1000))
-            lock.release()
+            try:
+                lock.release()
+            except BaseException:
+                result.cleanup_ok = False
+                result.ok = False
+                result.cleanup_errors = (*result.cleanup_errors, "lock release failed")
         return result
 
     def _dispatch(self, action) -> None:
-        kind = action.kind
-        if kind == "key":
-            keys = action.value.split("+")
-            for key in keys: self.client.key_down(key)
-            try: self.client.key_up(keys[-1])
-            finally:
-                for key in reversed(keys[:-1]): self.client.key_up(key)
-        elif kind == "text": self.client.type_text(action.value)
-        elif kind == "hold_key":
-            self.client.key_down(action.key)
-            try: self.sleep(action.duration_ms / 1000)
-            finally: self.client.key_up(action.key)
-        elif kind == "release_all": self.client.release_all()
-        elif kind == "mouse_move": self.client.mouse_move(action.x, action.y)
-        elif kind == "mouse_move_pct": self.client.mouse_move_pct(action.x_pct, action.y_pct)
-        elif kind == "mouse_click":
-            for _ in range(action.count):
-                self.client.mouse_button(action.button, True); self.client.mouse_button(action.button, False)
-        elif kind == "mouse_scroll": self.client.mouse_scroll(action.dx, action.dy)
-        elif kind == "wait": self.sleep(action.duration_ms / 1000)
-        else: raise ValueError("unsupported action type")
+        try:
+            handler = self._dispatch_table[action.kind]
+        except KeyError:
+            raise ValueError("unsupported action type") from None
+        handler(action)
+
+    def _dispatch_key(self, action) -> None:
+        keys = action.value.split("+")
+        for key in keys:
+            self.client.key_down(key)
+        try:
+            self.client.key_up(keys[-1])
+        finally:
+            for key in reversed(keys[:-1]):
+                self.client.key_up(key)
+
+    def _dispatch_text(self, action) -> None: self.client.type_text(action.value)
+
+    def _dispatch_hold_key(self, action) -> None:
+        self.client.key_down(action.key)
+        try:
+            self.sleep(action.duration_ms / 1000)
+        finally:
+            self.client.key_up(action.key)
+
+    def _dispatch_release_all(self, action) -> None: self.client.release_all()
+    def _dispatch_mouse_move(self, action) -> None: self.client.mouse_move(action.x, action.y)
+    def _dispatch_mouse_move_pct(self, action) -> None: self.client.mouse_move_pct(action.x_pct, action.y_pct)
+
+    def _dispatch_mouse_click(self, action) -> None:
+        for _ in range(action.count):
+            self.client.mouse_button(action.button, True)
+            self.client.mouse_button(action.button, False)
+
+    def _dispatch_mouse_scroll(self, action) -> None: self.client.mouse_scroll(action.dx, action.dy)
+    def _dispatch_wait(self, action) -> None: self.sleep(action.duration_ms / 1000)
 
     def execute_workflow(self, workflow: WorkflowDefinition, *, approved: bool,
                          target: Optional[str] = None, ttl_s: float = 30.0) -> SequenceExecutionResult:
-        if workflow._derived_revision() != workflow.revision:
-            raise ValueError("workflow revision mismatch")
         actual_target = target or workflow.resolved_target or workflow.target
+        if workflow._derived_revision() != workflow.revision:
+            if actual_target:
+                self.journal.checkpoint(operation="sequence", target=actual_target,
+                                        transition="aborted", reason="workflow revision mismatch")
+            raise ValueError("workflow revision mismatch")
         if actual_target is None:
             raise ValueError("workflow invocation target required")
         if not workflow.target_independent and actual_target != workflow.target:
             raise ValueError("workflow target mismatch")
         bound = workflow.plan
         if bound.target != actual_target:
-            from dataclasses import replace
             bound = replace(bound, target=actual_target)
         planned = self.plan(bound, workflow_revision=workflow.revision)
         return self.execute(self.authorize(planned, approved=approved, ttl_s=ttl_s))
