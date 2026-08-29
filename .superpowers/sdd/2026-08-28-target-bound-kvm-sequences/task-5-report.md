@@ -70,6 +70,32 @@ Additional verification: `git diff --check` passed.
 - The repository's declared `mcp` dependency is optional; the pre-existing `.venv` did not contain it, so it was installed locally with `uv sync --extra dev --extra mcp`. No dependency or lockfile changes were committed.
 - The dispatcher accepts both `{ "plan": {...} }` and a direct inline plan mapping, plus strict `plan_b64` JSON input. Named workflows remain repository-injected; the default repository is empty.
 
+## Task 5 fix round 2 verification
+
+Corrected direct inline-plan decoding for `kvm_sequence_authorize` and `kvm_sequence_execute`: `approved` and `ttl_s` are dispatcher control fields and are now removed before semantic plan validation. Added regression coverage for valid inline authorize/execute calls and unknown inline fields.
+
+Exact commands and results:
+
+```text
+.venv/bin/python -m pytest tests/test_sequence_mcp.py -q
+..FF................                                                     [100%]
+2 failed, 18 passed in 0.10s (expected RED for the new inline-plan regression tests)
+
+.venv/bin/python -m pytest tests/test_sequence_mcp.py tests/test_mcp_server.py tests/test_cli_mcp.py -q
+..........................................                               [100%]
+42 passed in 2.10s
+
+.venv/bin/python -m pytest -q
+..........................................................s............. [ 29%]
+......................................s................................. [ 58%]
+............................................................s........... [ 87%]
+...............................                                          [100%]
+244 passed, 3 skipped in 22.76s
+
+.venv/bin/python -m compileall -q kvmctl tests && git diff --check
+passed (no output)
+```
+
 ## Task 5 fix round 1 verification
 
 Fixed all MCP review findings: explicit per-tool argument allowlists reject unknown fields; direct dispatch validates booleans and finite numeric TTLs without coercion; MCP no longer infers workflow inspection targets; and regression coverage now includes invalid action data, target/revision mismatch propagation, and server dispatch parity.

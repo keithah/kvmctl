@@ -85,8 +85,10 @@ def _decode_plan(arguments: dict) -> object:
     if "plan" in arguments:
         return arguments["plan"]
     # The dispatcher also accepts an inline plan as the argument object.
+    # Sequence control fields belong to the dispatcher call, not the plan.
     if "target" in arguments or "actions" in arguments:
-        return arguments
+        return {key: value for key, value in arguments.items()
+                if key not in {"approved", "ttl_s"}}
     encoded = arguments.get("plan_b64")
     if encoded is None:
         raise ValueError("plan is required")

@@ -51,6 +51,22 @@ def test_dispatch_sequence_authorize_and_execute_preserves_structured_errors(tmp
     assert out["ok"] is True
 
 
+@pytest.mark.parametrize("name", ["kvm_sequence_authorize", "kvm_sequence_execute"])
+def test_dispatch_sequence_accepts_inline_plan_with_control_fields(tmp_path, name):
+    _, ctx = client_and_context(tmp_path, write_enabled=True)
+    out = call(name, {**plan(), "approved": True, "ttl_s": 30.0}, ctx)
+    assert out["ok"] is True
+    assert "approved" not in out["evidence"]
+    assert "ttl_s" not in out["evidence"]
+
+
+def test_dispatch_sequence_rejects_unknown_inline_plan_field(tmp_path):
+    _, ctx = client_and_context(tmp_path, write_enabled=True)
+    out = call("kvm_sequence_execute", {**plan(), "approvald": True}, ctx)
+    assert out["ok"] is False
+    assert "unsupported argument" in out["error"]["code"]
+
+
 def test_dispatch_rejects_invalid_encoded_plan_without_raise(tmp_path):
     _, ctx = client_and_context(tmp_path)
     out = call("kvm_sequence_plan", {"plan_b64": "%%%"}, ctx)
