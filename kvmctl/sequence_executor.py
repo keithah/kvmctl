@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import secrets
 import time
+import threading
 from typing import Callable, Optional
 import hashlib
 import math
@@ -97,6 +98,8 @@ class SequenceExecutor:
         self._active_target = None
         self._active_plan_hash = ""
         self._active_deadline = None
+        self._active_expires_at = None
+        self._wait_poisoned = False
         self._screen_executor = None
         self._screen_poisoned = False
         self._dispatch_table = {
@@ -291,6 +294,7 @@ class SequenceExecutor:
                 return result
             deadline = start + authorization.plan.max_duration_ms / 1000.0
             self._active_target, self._active_plan_hash, self._active_deadline = authorization.target, authorization.plan_hash, deadline
+            self._active_expires_at = authorization.expires_at
             self._checkpoint("started", target=authorization.target, plan_hash=authorization.plan_hash)
             for index, action in enumerate(authorization.plan.actions):
                 if self.clock() >= deadline:
@@ -317,6 +321,7 @@ class SequenceExecutor:
             self._abort_preflight(authorization, result.error)
         finally:
             self._active_target, self._active_plan_hash, self._active_deadline = None, "", None
+            self._active_expires_at = None
             cleanup_errors: list[str] = []
             try:
                 self.client.release_all()
@@ -351,36 +356,69 @@ class SequenceExecutor:
             raise ValueError("unsupported action type") from None
         handler(action)
 
+    def _check_action_window(self) -> None:
+        now = self.clock()
+        if self._active_expires_at is not None and now >= self._active_expires_at:
+            raise RuntimeError("authorization expired")
+        if self._active_deadline is not None and now >= self._active_deadline:
+            raise TimeoutError("sequence deadline expired")
+
+    def _mutate(self, operation, *args) -> None:
+        self._check_action_window()
+        operation(*args)
+
     def _dispatch_key(self, action) -> None:
         keys = action.value.split("+")
         for key in keys:
-            self.client.key_down(key)
+            self._mutate(self.client.key_down, key)
         try:
-            self.client.key_up(keys[-1])
+            self._mutate(self.client.key_up, keys[-1])
         finally:
             for key in reversed(keys[:-1]):
-                self.client.key_up(key)
+                self._mutate(self.client.key_up, key)
 
-    def _dispatch_text(self, action) -> None: self.client.type_text(action.value)
+    def _dispatch_text(self, action) -> None: self._mutate(self.client.type_text, action.value)
 
     def _dispatch_hold_key(self, action) -> None:
-        self.client.key_down(action.key)
+        self._mutate(self.client.key_down, action.key)
         try:
-            self.sleep(action.duration_ms / 1000)
+            self._bounded_wait(action.duration_ms / 1000)
         finally:
-            self.client.key_up(action.key)
+            self._mutate(self.client.key_up, action.key)
 
-    def _dispatch_release_all(self, action) -> None: self.client.release_all()
-    def _dispatch_mouse_move(self, action) -> None: self.client.mouse_move(action.x, action.y)
-    def _dispatch_mouse_move_pct(self, action) -> None: self.client.mouse_move_pct(action.x_pct, action.y_pct)
+    def _dispatch_release_all(self, action) -> None: self._mutate(self.client.release_all)
+    def _dispatch_mouse_move(self, action) -> None: self._mutate(self.client.mouse_move, action.x, action.y)
+    def _dispatch_mouse_move_pct(self, action) -> None: self._mutate(self.client.mouse_move_pct, action.x_pct, action.y_pct)
 
     def _dispatch_mouse_click(self, action) -> None:
         for _ in range(action.count):
-            self.client.mouse_button(action.button, True)
-            self.client.mouse_button(action.button, False)
+            self._mutate(self.client.mouse_button, action.button, True)
+            self._mutate(self.client.mouse_button, action.button, False)
 
-    def _dispatch_mouse_scroll(self, action) -> None: self.client.mouse_scroll(action.dx, action.dy)
-    def _dispatch_wait(self, action) -> None: self.sleep(action.duration_ms / 1000)
+    def _dispatch_mouse_scroll(self, action) -> None: self._mutate(self.client.mouse_scroll, action.dx, action.dy)
+    def _bounded_wait(self, duration: float) -> None:
+        self._check_action_window()
+        if self._wait_poisoned:
+            raise RuntimeError("wait unavailable")
+        remaining = min(self._active_expires_at or float("inf"), self._active_deadline or float("inf")) - self.clock()
+        if remaining <= 0:
+            raise TimeoutError("sequence deadline expired")
+        completed = threading.Event()
+        outcome = []
+        def run():
+            try: self.sleep(duration)
+            except BaseException as exc: outcome.append(exc)
+            finally: completed.set()
+        threading.Thread(target=run, daemon=True).start()
+        timeout = remaining if duration > remaining else duration + 0.1
+        if not completed.wait(timeout=timeout):
+            self._wait_poisoned = True
+            raise TimeoutError("sequence deadline expired")
+        if outcome:
+            raise outcome[0]
+        self._check_action_window()
+
+    def _dispatch_wait(self, action) -> None: self._bounded_wait(action.duration_ms / 1000)
 
     def _dispatch_assert_screen(self, action) -> None:
         snapshot = getattr(self.client, "snapshot_jpeg", None)

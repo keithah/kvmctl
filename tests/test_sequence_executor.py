@@ -274,3 +274,45 @@ def test_unowned_stream_is_not_closed_but_owned_stream_is_closed(tmp_path):
     planned = ex.plan({"target":"pve2","actions":[{"type":"release_all"}]})
     ex.execute(ex.authorize(planned, approved=True))
     assert ("close_stream",) in client.calls
+
+
+def test_expiry_is_checked_before_each_mutating_hid_call(tmp_path):
+    now = [0.0]
+    client = FakeClient()
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "expiry.jsonl"),
+                          clock=lambda: now[0], sleep=lambda _: None,
+                          device_id="expiry-each-call")
+    planned = ex.plan({"target": "pve2", "actions": [
+        {"type": "key", "value": "Control+Enter"},
+        {"type": "text", "value": "must-not-run"},
+    ]})
+    auth = ex.authorize(planned, approved=True, ttl_s=1)
+    original_key_down = client.key_down
+    def advancing_key_down(key):
+        original_key_down(key)
+        now[0] = 2.0
+    client.key_down = advancing_key_down
+    result = ex.execute(auth)
+    assert not result.ok and result.error == "authorization expired"
+    assert ("text", "must-not-run") not in client.calls
+
+
+def test_blocking_wait_is_bounded_by_deadline(tmp_path):
+    import threading
+    entered = threading.Event()
+    release = threading.Event()
+    client = FakeClient()
+    def blocking_sleep(_duration):
+        entered.set(); release.wait(10)
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "wait.jsonl"),
+                          clock=lambda: 0.0, sleep=blocking_sleep,
+                          device_id="bounded-wait")
+    planned = ex.plan({"target": "pve2", "max_duration_ms": 20,
+                       "actions": [{"type": "wait", "duration_ms": 1000},
+                                   {"type": "text", "value": "must-not-run"}]})
+    auth = ex.authorize(planned, approved=True, ttl_s=1)
+    result = ex.execute(auth)
+    release.set()
+    assert not result.ok and result.error == "deadline exceeded"
+    assert entered.is_set()
+    assert ("text", "must-not-run") not in client.calls

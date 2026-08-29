@@ -34,6 +34,7 @@ TOOL_SPEC = [
     {"name": "kvm_sequence_plan", "description": "Validate and plan a target-bound KVM sequence.", "write_gate": False, "read_only": True},
     {"name": "kvm_sequence_authorize", "description": "Authorize a planned KVM sequence.", "write_gate": True, "read_only": False},
     {"name": "kvm_sequence_execute", "description": "Execute an authorized KVM sequence.", "write_gate": True, "read_only": False},
+    {"name": "kvm_workflow_authorize", "description": "Authorize a named KVM workflow.", "write_gate": True, "read_only": False},
     {"name": "kvm_workflow_list", "description": "List named KVM workflows.", "write_gate": False, "read_only": True},
     {"name": "kvm_workflow_inspect", "description": "Inspect a named KVM workflow.", "write_gate": False, "read_only": True},
     {"name": "kvm_workflow_execute", "description": "Execute a named KVM workflow.", "write_gate": True, "read_only": False},

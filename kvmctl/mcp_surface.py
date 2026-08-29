@@ -29,15 +29,7 @@ from kvmctl.semantics import SemanticSurface
 from kvmctl.host import HostProbeProfile
 from kvmctl.results import normalize_error, operation_result
 
-TOOL_SPEC = list(_BASE_TOOL_SPEC) + [
-    {"name": "kvm_sequence_plan", "read_only": True},
-    {"name": "kvm_sequence_authorize", "write_gate": True},
-    {"name": "kvm_sequence_execute", "write_gate": True},
-    {"name": "kvm_workflow_authorize", "write_gate": True},
-    {"name": "kvm_workflow_list", "read_only": True},
-    {"name": "kvm_workflow_inspect", "read_only": True},
-    {"name": "kvm_workflow_execute", "write_gate": True},
-]
+TOOL_SPEC = list(_BASE_TOOL_SPEC)
 _TOOL_NAMES = frozenset(t["name"] for t in TOOL_SPEC)
 
 

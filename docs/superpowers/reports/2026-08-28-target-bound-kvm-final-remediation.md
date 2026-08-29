@@ -96,3 +96,18 @@ exit 0
 ```
 
 Implemented a SHA-256 endpoint/device keyed flock lock with fail-closed acquisition and process-local contention handling; propagated canonical plan hashes into semantic policy rejection checkpoints; added JSON workflow-file loading via `--workflows`/`KVMCTL_WORKFLOWS_FILE` for standalone CLI and MCP invocations; and retained one bounded screen worker per executor, poisoning it after timeout instead of accumulating timed-out threads. Added cross-process lock and worker-bound regression coverage.
+
+## Final review expiry, persistence, and catalog parity remediation (2026-08-28)
+
+```text
+Focused remediation tests:
+78 passed in 1.58s
+
+Full suite:
+279 passed, 3 skipped in 23.10s
+
+compileall and git diff --check:
+exit 0
+```
+
+Rechecked authorization expiry and sequence deadlines before each HID mutation, bounded blocking waits with fail-closed timeout behavior, replaced predictable staging with exclusive 0600 temporary files plus file/directory fsync and symlink rejection, and moved `kvm_workflow_authorize` into the canonical operation catalog while removing duplicate MCP registry entries. Added advancing-clock, blocking-wait, symlink, staging, and catalog-parity regressions.

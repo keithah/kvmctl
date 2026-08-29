@@ -1,6 +1,6 @@
 """Tamper-evident persistence for verified sessions and capabilities."""
 from __future__ import annotations
-import hashlib, hmac, json, os, pathlib, stat, time
+import hashlib, hmac, json, os, pathlib, stat, tempfile, time
 from contextlib import contextmanager
 import fcntl
 from .machines import SelectionRecord, SelectionState, SessionState
@@ -13,21 +13,41 @@ def _paths(path):
 
 def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
     try:
-        info = path.stat()
+        info = path.lstat()
     except FileNotFoundError:
         if allow_missing: return
         raise
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
             or info.st_mode & 0o077):
         raise PermissionError(f"unsafe persistent file: {path}")
 
 
 def _atomic_write(path: pathlib.Path, data: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    _secure_file(tmp)
-    os.replace(tmp, path)
+    path = pathlib.Path(path)
+    _secure_file(path, allow_missing=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = pathlib.Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+            info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PermissionError(f"unsafe temporary file: {tmp}")
+        os.replace(tmp, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def save_session(session: SessionState, path: str, *, endpoint: str) -> None:

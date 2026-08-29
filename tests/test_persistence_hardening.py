@@ -25,3 +25,28 @@ def test_store_rejects_unsafe_existing_files(tmp_path):
     try: s.put(auth('one'))
     except PermissionError: pass
     else: raise AssertionError('unsafe file accepted')
+
+
+def test_atomic_staging_uses_unique_exclusive_regular_file(tmp_path):
+    from kvmctl.session_store import _atomic_write
+    path = tmp_path / "state"
+    _atomic_write(path, "first")
+    _atomic_write(path, "second")
+    assert path.read_text() == "second"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert not list(tmp_path.glob("state.tmp"))
+
+
+def test_atomic_write_rejects_symlink_target(tmp_path):
+    from kvmctl.session_store import _atomic_write
+    target = tmp_path / "real"
+    target.write_text("keep")
+    link = tmp_path / "state"
+    link.symlink_to(target)
+    try:
+        _atomic_write(link, "must-not-follow")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("symlink target accepted")
+    assert target.read_text() == "keep"

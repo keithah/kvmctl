@@ -128,6 +128,16 @@ def test_read_only_catalog_entries_explicitly_disable_write_gate():
         assert entries[name]["write_gate"] is False
 
 
+def test_operation_catalog_has_one_explicit_workflow_authorize_entry():
+    from kvmctl.mcp_surface import TOOL_SPEC as MCP_TOOL_SPEC
+    from kvmctl.operations import TOOL_SPEC
+    entries = [entry for entry in TOOL_SPEC if entry["name"] == "kvm_workflow_authorize"]
+    assert len(entries) == 1
+    assert entries[0]["write_gate"] is True
+    assert entries[0]["read_only"] is False
+    assert [entry["name"] for entry in MCP_TOOL_SPEC].count("kvm_workflow_authorize") == 1
+
+
 def test_authorize_rejects_forged_or_mismatched_plan_records():
     executor = FakeExecutor()
     surf = surface(write_enabled=True, executor=executor)
