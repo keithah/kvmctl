@@ -147,7 +147,8 @@ def test_cancellation_attempts_all_cleanup_and_redacts_exception(tmp_path):
 
     client = CancelClient()
     ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "cancel.jsonl"),
-                          clock=lambda: 0.0, sleep=lambda _: None, device_id="cancel-test")
+                          clock=lambda: 0.0, sleep=lambda _: None, device_id="cancel-test",
+                          stream_owned=True)
     plan = ex.plan({"target":"pve2", "actions":[{"type":"key", "value":"Enter"}]})
     result = ex.execute(ex.authorize(plan, approved=True))
     assert result.error == "cancelled"
@@ -166,3 +167,58 @@ def test_workflow_revision_mismatch_is_aborted(tmp_path):
         ex.execute_workflow(workflow, approved=True)
     records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
     assert records[-1]["transition"] == "aborted"
+
+
+def test_execute_workflow_target_rejection_is_journaled(tmp_path):
+    from kvmctl.workflows import WorkflowDefinition
+    workflow = WorkflowDefinition.from_mapping({"name":"bound", "target":"pve2", "steps":[{"type":"release_all"}]})
+    ex = make_executor(tmp_path)
+    with pytest.raises(ValueError, match="workflow target mismatch"):
+        ex.execute_workflow(workflow, approved=True, target="pve1")
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["reason"] == "workflow target mismatch"
+
+
+def test_execute_workflow_missing_target_is_journaled(tmp_path):
+    from kvmctl.workflows import WorkflowDefinition
+    workflow = WorkflowDefinition.from_mapping({"name":"independent", "target_independent":True, "steps":[{"type":"release_all"}]})
+    ex = make_executor(tmp_path)
+    with pytest.raises(ValueError, match="target required"):
+        ex.execute_workflow(workflow, approved=True)
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["target"] is None
+
+
+def test_plan_and_authorization_rejections_are_journaled(tmp_path):
+    ex = make_executor(tmp_path, session=SessionState())
+    with pytest.raises(ValueError, match="verified"):
+        ex.plan({"target":"pve2","actions":[{"type":"release_all"}]})
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["reason"] == "target session is not verified"
+
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target":"pve2","actions":[{"type":"release_all"}]})
+    with pytest.raises(ValueError, match="approved"):
+        ex.authorize(planned, approved=False)
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["reason"] == "plan must be approved"
+
+
+def test_unowned_stream_is_not_closed_but_owned_stream_is_closed(tmp_path):
+    client = FakeClient()
+    ex = make_executor(tmp_path, client)
+    planned = ex.plan({"target":"pve2","actions":[{"type":"release_all"}]})
+    ex.execute(ex.authorize(planned, approved=True))
+    assert ("close_stream",) not in client.calls
+
+    client = FakeClient()
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "owned.jsonl"),
+                          clock=lambda: 0.0, sleep=lambda _: None,
+                          device_id="owned-stream", stream_owned=True)
+    planned = ex.plan({"target":"pve2","actions":[{"type":"release_all"}]})
+    ex.execute(ex.authorize(planned, approved=True))
+    assert ("close_stream",) in client.calls

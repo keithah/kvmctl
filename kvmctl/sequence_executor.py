@@ -96,7 +96,7 @@ class SequenceExecutor:
                 return f"client:{attr}:{value}"
         return f"client:{id(client)}"
 
-    def _checkpoint(self, transition: str, *, target: str, plan_hash: str, **details) -> None:
+    def _checkpoint(self, transition: str, *, target: str | None, plan_hash: str, **details) -> None:
         self.journal.checkpoint(operation="sequence", target=target, transition=transition,
                                 plan_hash=plan_hash, **details)
 
@@ -104,12 +104,27 @@ class SequenceExecutor:
         self._checkpoint("aborted", target=authorization.target,
                          plan_hash=authorization.plan_hash, reason=reason)
 
+    def _abort(self, *, target: str | None, reason: str,
+               plan_hash_value: str | None = None) -> None:
+        details = {"reason": reason}
+        self._checkpoint("aborted", target=target, plan_hash=plan_hash_value or "", **details)
+
     def plan(self, plan: SequencePlan, *, workflow_revision: str | None = None) -> SequencePlanRecord:
-        canonical = validate_plan(plan)
+        target = getattr(plan, "target", None)
+        if isinstance(plan, dict):
+            target = plan.get("target")
+        try:
+            canonical = validate_plan(plan)
+        except (TypeError, ValueError, KeyError):
+            self._abort(target=target if isinstance(target, str) else None,
+                        reason="plan validation failed")
+            raise
         current = self.session.current
         if current is None or not current.verified:
+            self._abort(target=canonical.target, reason="target session is not verified")
             raise ValueError("target session is not verified")
         if current.machine != canonical.target:
+            self._abort(target=canonical.target, reason="target mismatch")
             raise ValueError("target mismatch")
         digest = plan_hash(canonical)
         record = SequencePlanRecord(canonical, canonical.target, digest, len(canonical.actions),
@@ -122,8 +137,12 @@ class SequenceExecutor:
     def authorize(self, planned: SequencePlanRecord, *, approved: bool,
                   ttl_s: float = 30.0) -> SequenceAuthorization:
         if not approved:
+            self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
+                        reason="plan must be approved")
             raise ValueError("plan must be approved")
         if ttl_s <= 0:
+            self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
+                        reason="authorization ttl must be positive")
             raise ValueError("authorization ttl must be positive")
         now = self.clock()
         auth = SequenceAuthorization(planned.plan, planned.target, planned.plan_hash,
@@ -188,9 +207,10 @@ class SequenceExecutor:
             except BaseException:
                 cleanup_errors.append("release_all failed")
             try:
-                close_stream = getattr(self.client, "close_stream", None)
-                if close_stream is not None:
-                    close_stream()
+                if self.stream_owned:
+                    close_stream = getattr(self.client, "close_stream", None)
+                    if close_stream is not None:
+                        close_stream()
             except BaseException:
                 cleanup_errors.append("close_stream failed")
             result.cleanup_errors = tuple(cleanup_errors)
@@ -250,13 +270,13 @@ class SequenceExecutor:
                          target: Optional[str] = None, ttl_s: float = 30.0) -> SequenceExecutionResult:
         actual_target = target or workflow.resolved_target or workflow.target
         if workflow._derived_revision() != workflow.revision:
-            if actual_target:
-                self.journal.checkpoint(operation="sequence", target=actual_target,
-                                        transition="aborted", reason="workflow revision mismatch")
+            self._abort(target=actual_target, reason="workflow revision mismatch")
             raise ValueError("workflow revision mismatch")
         if actual_target is None:
+            self._abort(target=None, reason="workflow invocation target required")
             raise ValueError("workflow invocation target required")
         if not workflow.target_independent and actual_target != workflow.target:
+            self._abort(target=actual_target, reason="workflow target mismatch")
             raise ValueError("workflow target mismatch")
         bound = workflow.plan
         if bound.target != actual_target:

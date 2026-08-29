@@ -18,6 +18,16 @@
 ## Commit
 - `HEAD` — `feat: execute target-bound KVM sequences safely`
 
+## Task 3 review fix round 2
+- Restored stream ownership gating: `close_stream()` is called only when `stream_owned=True`; `release_all()` and independent cleanup error handling remain unconditional.
+- Journal `aborted` for workflow target-required/target-mismatch/revision rejections and plan/authorization preflight rejection paths.
+- Added acceptance coverage for execute-boundary workflow target mismatch, missing workflow target, plan/authorization rejection journaling, and owned/unowned stream cleanup.
+
+### Fix-round 2 verification (exact outputs)
+- RED command: `.venv/bin/python -m pytest tests/test_sequence_executor.py -q` → `4 failed, 8 passed in 0.05s` (new tests failed before implementation; initial stream test also exposed the expected missing ownership gate).
+- GREEN focused command: `.venv/bin/python -m pytest tests/test_sequence_executor.py -q` → `12 passed in 0.04s`.
+- Focused command: `.venv/bin/python -m pytest tests/test_sequence_executor.py tests/test_journal.py tests/test_machines.py -q && git diff --check` → `34 passed in 20.35s`; diff check clean; exit 0.
+
 ## Concerns
 - Full repository suite could not collect because the worktree environment lacks the `mcp` package; the Task 3-focused suite passes.
 - Stream cleanup is controlled by the constructor's `stream_owned=True` flag; the executor does not open streams implicitly.
