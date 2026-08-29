@@ -23,7 +23,7 @@ def client_from_env(*, return_settings: bool = False):
 
 def build_mcp_server(*, client=None, settings: Settings | None = None,
                      host_runner=None, workflow_repository=None,
-                     sequence_executor=None, journal=None) -> FastMCP:
+                     sequence_executor=None, journal=None, session=None) -> FastMCP:
     if client is None:
         client, loaded = client_from_env(return_settings=True)
         settings = settings or loaded
@@ -32,7 +32,7 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
         "Safe KVMD semantic operations. Read-only by default; writes require "
         "KVMCTL_WRITE_ENABLED and remain subject to operation policy."
     ))
-    session = SessionState()
+    session = session or SessionState()
 
     def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         raw = dispatch_tool(name, arguments, context={

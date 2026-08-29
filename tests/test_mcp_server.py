@@ -6,6 +6,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from conftest import FakeKvmd
 from kvmctl.client import KvmClient
+from kvmctl.machines import RACK, SessionState
 from kvmctl.mcp_server import build_mcp_server, client_from_env, main
 
 
@@ -100,3 +101,22 @@ def test_mcp_write_tool_defaults_to_refused():
     result = result.structuredContent
     assert result["ok"] is False
     assert "policy" in result["error"].lower()
+
+
+def test_mcp_sequence_server_dispatches_same_structured_envelope():
+    client, _ = make_client()
+    session_state = SessionState()
+    session_state.mark_selected(RACK["pve2"])
+    session_state.mark_verified("pve2")
+    server = build_mcp_server(client=client, session=session_state)
+    async def exercise():
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            result = await session.call_tool("kvm_sequence_plan", {
+                "plan": {"target": "pve2", "actions": [{"type": "wait", "duration_ms": 1}]},
+            })
+            return result.structuredContent
+    result = asyncio.run(exercise())
+    assert result["operation"] == "kvm_sequence_plan"
+    assert result["ok"] is True
+    assert result["evidence"]["action_count"] == 1

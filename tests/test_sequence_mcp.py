@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from conftest import FakeKvmd
 from kvmctl.client import KvmClient
 from kvmctl.journal import Journal
@@ -55,13 +57,21 @@ def test_dispatch_rejects_invalid_encoded_plan_without_raise(tmp_path):
     assert out["ok"] is False and out["error"] is not None
 
 
+def test_dispatch_rejects_invalid_action_data_without_raise(tmp_path):
+    _, ctx = client_and_context(tmp_path)
+    invalid = {"target": "pve2", "actions": [{"type": "wait", "duration_ms": "1"}]}
+    out = call("kvm_sequence_plan", {"plan": invalid}, ctx)
+    assert out["ok"] is False
+    assert "duration_ms must be finite numeric" in out["error"]["code"]
+
+
 def test_workflow_tools_list_and_inspect_redact_secret(tmp_path):
     workflow = {"name": "safe", "target": "pve2", "steps": [{"type": "text", "value": "token=secret"}]}
     _, ctx = client_and_context(tmp_path, workflows=[workflow])
     listed = call("kvm_workflow_list", {}, ctx)
     assert listed["ok"] and listed["evidence"]["workflows"][0]["actions"][0]["value"] == "[REDACTED]"
     rev = listed["evidence"]["workflows"][0]["revision"]
-    inspected = call("kvm_workflow_inspect", {"name": "safe", "revision": rev}, ctx)
+    inspected = call("kvm_workflow_inspect", {"name": "safe", "revision": rev, "target": "pve2"}, ctx)
     assert inspected["ok"] and "secret" not in json.dumps(inspected)
 
 
@@ -74,3 +84,40 @@ def test_workflow_execute_matches_inline_plan(tmp_path):
     assert out["ok"] is True
     inline = call("kvm_sequence_execute", {"plan": plan(), "approved": True}, ctx)
     assert inline["evidence"]["plan_hash"] == out["evidence"]["plan_hash"]
+
+
+@pytest.mark.parametrize("name,args", [
+    ("kvm_sequence_plan", {"plan": plan(), "extra": True}),
+    ("kvm_sequence_authorize", {"plan": plan(), "extra": True}),
+    ("kvm_sequence_execute", {"plan": plan(), "extra": True}),
+    ("kvm_workflow_list", {"extra": True}),
+    ("kvm_workflow_inspect", {"name": "safe", "extra": True}),
+    ("kvm_workflow_execute", {"name": "safe", "revision": "x", "extra": True}),
+])
+def test_new_dispatchers_reject_unknown_top_level_fields(tmp_path, name, args):
+    _, ctx = client_and_context(tmp_path)
+    out = call(name, args, ctx)
+    assert out["ok"] is False
+    assert "unsupported argument" in out["error"]["code"]
+
+
+@pytest.mark.parametrize("args", [
+    {"plan": plan(), "approved": "false"},
+    {"plan": plan(), "approved": 1},
+    {"plan": plan(), "ttl_s": "30"},
+    {"plan": plan(), "ttl_s": float("inf")},
+])
+def test_sequence_dispatch_rejects_coerced_or_nonfinite_types(tmp_path, args):
+    _, ctx = client_and_context(tmp_path, write_enabled=True)
+    out = call("kvm_sequence_execute", args, ctx)
+    assert out["ok"] is False
+    assert "invalid argument" in out["error"]["code"]
+
+
+def test_dispatch_propagates_target_mismatch_and_revision_mismatch(tmp_path):
+    workflow = {"name": "safe", "target": "pve2", "steps": [{"type": "wait", "duration_ms": 1}]}
+    _, ctx = client_and_context(tmp_path, write_enabled=True, workflows=[workflow])
+    mismatch = call("kvm_sequence_execute", {"plan": {**plan(), "target": "pve1"}, "approved": True}, ctx)
+    assert "target mismatch" in mismatch["error"]["code"]
+    bad_revision = call("kvm_workflow_execute", {"name": "safe", "revision": "sha256:bad", "approved": True, "target": "pve2"}, ctx)
+    assert "workflow revision mismatch" in bad_revision["error"]["code"]

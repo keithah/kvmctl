@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import base64
+import math
+from collections.abc import Mapping
 from typing import Optional
 
 from kvmctl.client import KvmClient
@@ -58,6 +60,20 @@ _SEQUENCE_TOOLS = frozenset({"kvm_sequence_plan", "kvm_sequence_authorize",
                              "kvm_sequence_execute", "kvm_workflow_list",
                              "kvm_workflow_inspect", "kvm_workflow_execute"})
 
+# Keep dispatcher validation explicit: unlike FastMCP's generated schemas,
+# direct callers do not receive argument validation from the transport.
+_PLAN_FIELDS = frozenset({"plan", "plan_b64", "target", "actions",
+                          "max_duration_ms", "unexpected_screen_policy"})
+_SEQUENCE_FIELDS = _PLAN_FIELDS | {"approved", "ttl_s"}
+_WORKFLOW_SCHEMAS = {
+    "kvm_sequence_plan": _PLAN_FIELDS,
+    "kvm_sequence_authorize": _SEQUENCE_FIELDS,
+    "kvm_sequence_execute": _SEQUENCE_FIELDS,
+    "kvm_workflow_list": frozenset(),
+    "kvm_workflow_inspect": frozenset({"name", "revision", "target"}),
+    "kvm_workflow_execute": frozenset({"name", "revision", "approved", "target", "ttl_s"}),
+}
+
 
 def _sequence_error(name: str, exc: BaseException) -> str:
     return json.dumps(operation_result(operation=name, transport="kvm",
@@ -81,6 +97,41 @@ def _decode_plan(arguments: dict) -> object:
         raise ValueError("invalid base64 plan") from exc
 
 
+def _validate_sequence_arguments(name: str, arguments: dict) -> None:
+    unknown = set(arguments) - _WORKFLOW_SCHEMAS[name]
+    if unknown:
+        raise ValueError(f"unsupported argument field(s): {', '.join(sorted(unknown))}")
+    if name in {"kvm_sequence_plan", "kvm_sequence_authorize", "kvm_sequence_execute"}:
+        if "plan" in arguments and not isinstance(arguments["plan"], Mapping):
+            raise TypeError("invalid argument plan: expected object")
+        if "plan_b64" in arguments and not isinstance(arguments["plan_b64"], str):
+            raise TypeError("invalid argument plan_b64: expected string")
+        if "approved" in arguments and type(arguments["approved"]) is not bool:
+            raise TypeError("invalid argument approved: expected boolean")
+        if "ttl_s" in arguments:
+            ttl = arguments["ttl_s"]
+            if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
+                raise TypeError("invalid argument ttl_s: expected finite number")
+    if name == "kvm_workflow_inspect":
+        if not isinstance(arguments.get("name"), str):
+            raise TypeError("invalid argument name: expected string")
+        for field in ("revision", "target"):
+            if field in arguments and arguments[field] is not None and not isinstance(arguments[field], str):
+                raise TypeError(f"invalid argument {field}: expected string")
+    if name == "kvm_workflow_execute":
+        for field in ("name", "revision"):
+            if not isinstance(arguments.get(field), str):
+                raise TypeError(f"invalid argument {field}: expected string")
+        if "target" in arguments and arguments["target"] is not None and not isinstance(arguments["target"], str):
+            raise TypeError("invalid argument target: expected string")
+        if "approved" in arguments and type(arguments["approved"]) is not bool:
+            raise TypeError("invalid argument approved: expected boolean")
+        if "ttl_s" in arguments:
+            ttl = arguments["ttl_s"]
+            if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl):
+                raise TypeError("invalid argument ttl_s: expected finite number")
+
+
 def dispatch_tool(name: str, arguments: Optional[dict], *,
                   context: dict) -> str:
     """Single JSON entry point for an MCP server shim."""
@@ -92,6 +143,9 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
     sleep = context.get("sleep")
     try:
         if name in _SEQUENCE_TOOLS:
+            if not isinstance(arguments, dict):
+                raise TypeError("invalid arguments: expected object")
+            _validate_sequence_arguments(name, arguments)
             if name == "kvm_sequence_plan":
                 out = surf.kvm_sequence_plan(_decode_plan(arguments))
             elif name == "kvm_sequence_authorize":
@@ -103,13 +157,7 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
             elif name == "kvm_workflow_list":
                 out = surf.kvm_workflow_list()
             elif name == "kvm_workflow_inspect":
-                inspect_target = arguments.get("target")
-                if inspect_target is None and arguments.get("revision") is not None:
-                    for definition in surf.workflow_repository.list():
-                        if definition.name == arguments.get("name") and not definition.target_independent:
-                            inspect_target = definition.target
-                            break
-                out = surf.kvm_workflow_inspect(arguments["name"], arguments.get("revision"), inspect_target)
+                out = surf.kvm_workflow_inspect(arguments["name"], arguments.get("revision"), arguments.get("target"))
             else:
                 out = surf.kvm_workflow_execute(arguments["name"], arguments["revision"],
                     approved=bool(arguments.get("approved", False)), target=arguments.get("target"),
