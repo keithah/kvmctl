@@ -15,6 +15,7 @@ from kvmctl.client import KvmClient
 from kvmctl.machines import SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
+from kvmctl.results import operation_result
 from kvmctl.host import ArgvRunner
 
 
@@ -139,7 +140,24 @@ def _read_plan(source: str):
     return value
 
 
+def _sequence_operation(command: str) -> str:
+    return {"sequence-plan": "kvm_sequence_plan",
+            "sequence-authorize": "kvm_sequence_authorize",
+            "sequence-execute": "kvm_sequence_execute",
+            "workflow-list": "kvm_workflow_list",
+            "workflow-inspect": "kvm_workflow_inspect",
+            "workflow-execute": "kvm_workflow_execute"}[command]
+
+
+def _sequence_error(command: str, exc: BaseException) -> dict:
+    operation = _sequence_operation(command)
+    return operation_result(operation=operation, transport="kvm",
+                            read_only=command in {"sequence-plan", "workflow-list", "workflow-inspect"},
+                            ok=False, state="aborted", error={"code": str(exc)[:300]})
+
+
 def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
+         session: Optional[SessionState] = None,
          sleep: Optional[Callable[[float], None]] = None,
          host_runner: Optional[ArgvRunner] = None) -> int:
     args = build_parser().parse_args(argv)
@@ -162,7 +180,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             print(json.dumps({"ok": False, "error": "provide --token/KVMCTL_TOKEN or --user+--password/KVMCTL_USER+KVMCTL_PASSWORD"}))
             return 2
 
-    surf = SemanticSurface(client, session=SessionState(), host_runner=host_runner)
+    surf = SemanticSurface(client, session=session or SessionState(), host_runner=host_runner)
     surf.write_enabled = args.yes
     sleep = sleep or _real_sleep
 
@@ -272,15 +290,18 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         else:  # pragma: no cover
             raise SystemExit(f"unknown command {args.command!r}")
     except PolicyError as exc:
-        print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
-        return 3
+        if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                             "workflow-list", "workflow-inspect", "workflow-execute"}:
+            out = _sequence_error(args.command, exc)
+        else:
+            print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
+            return 3
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                              "workflow-list", "workflow-inspect", "workflow-execute"}:
-            print(json.dumps({"operation": args.command.replace("-", "_"),
-                              "ok": False, "error": str(exc)[:300]}))
-            return 1
-        raise
+            out = _sequence_error(args.command, exc)
+        else:
+            raise
     except SystemExit as exc:
         if isinstance(exc.code, str):
             print(exc.code, file=sys.stderr)
@@ -288,9 +309,17 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         raise
     rendered = json.dumps(out)
     if getattr(args, "out", None):
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(rendered)
-            fh.write("\n")
+        try:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(rendered)
+                fh.write("\n")
+        except OSError as exc:
+            if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                                 "workflow-list", "workflow-inspect", "workflow-execute"}:
+                out = _sequence_error(args.command, exc)
+                rendered = json.dumps(out)
+            else:
+                raise
     print(rendered)
     return 0 if out.get("ok", True) else 1
 

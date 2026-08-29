@@ -3,6 +3,7 @@ import json
 import pytest
 
 from kvmctl.cli import build_parser, main
+from kvmctl.machines import RACK, SessionState
 
 
 PLAN = {"target": "pve2", "actions": [{"type": "key", "key": "ENTER"}], "max_duration_ms": 1000}
@@ -90,3 +91,52 @@ def test_sequence_plan_reads_file_and_writes_optional_output(monkeypatch, tmp_pa
     assert rc == 0
     assert json.loads(destination.read_text(encoding="utf-8"))["operation"] == "kvm_sequence_plan"
     assert json.loads(capsys.readouterr().out)["operation"] == "kvm_sequence_plan"
+
+
+def test_cli_uses_supplied_verified_session_context(monkeypatch):
+    seen = []
+    class Surface(FakeSurface):
+        def __init__(self, client, session=None, host_runner=None):
+            seen.append(session)
+            super().__init__(client, session, host_runner)
+    monkeypatch.setattr("kvmctl.cli.SemanticSurface", Surface)
+    session = SessionState()
+    session.mark_selected(RACK["pve2"])
+    session.mark_verified("test")
+    assert main(["--url", "https://kvm.test", "sequence-plan", "--plan", json.dumps(PLAN)],
+                client=object(), session=session) == 0
+    assert seen == [session]
+
+
+def test_cli_output_failure_is_structured_envelope(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("kvmctl.cli.SemanticSurface", FakeSurface)
+    destination = tmp_path / "missing" / "result.json"
+    rc = main(["--url", "https://kvm.test", "sequence-plan", "--plan", json.dumps(PLAN),
+               "--out", str(destination)], client=object())
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["operation"] == "kvm_sequence_plan"
+    assert {"target", "transport", "read_only", "ok", "changed", "state", "evidence",
+            "warnings", "error", "next_actions"} <= out.keys()
+    assert out["ok"] is False and out["error"]["code"]
+
+
+def test_cli_semantic_failures_preserve_operation_result_envelope(capsys):
+    class BrokenSurface:
+        def __init__(self, *args, **kwargs):
+            self.write_enabled = False
+        def kvm_sequence_plan(self, plan):
+            raise ValueError("target mismatch")
+    # This verifies the real CLI error adapter, independent of semantic details.
+    import kvmctl.cli
+    old = kvmctl.cli.SemanticSurface
+    kvmctl.cli.SemanticSurface = BrokenSurface
+    try:
+        rc = main(["--url", "https://kvm.test", "sequence-plan", "--plan", json.dumps(PLAN)], client=object())
+    finally:
+        kvmctl.cli.SemanticSurface = old
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["operation"] == "kvm_sequence_plan"
+    assert out["error"]["code"] == "target mismatch"
+    assert out["state"] == "aborted"
