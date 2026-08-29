@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import inspect
 from typing import Callable, Optional
 
 from kvmctl.client import KvmClient
@@ -17,6 +18,7 @@ from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
 from kvmctl.results import operation_result
 from kvmctl.host import ArgvRunner
+from kvmctl.session_store import load_session, save_session, FileAuthorizationStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,6 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan_command("sequence-authorize", write=True)
     plan_command("sequence-execute", write=True)
     sub.add_parser("workflow-list")
+    wa = sub.add_parser("workflow-authorize")
+    wa.add_argument("name"); wa.add_argument("--revision", required=True); wa.add_argument("--target", default=None); wa.add_argument("--ttl", type=float, default=30.0)
     wi = sub.add_parser("workflow-inspect")
     wi.add_argument("name")
     wi.add_argument("--revision", default=None)
@@ -144,7 +148,7 @@ def _sequence_operation(command: str) -> str:
     return {"sequence-plan": "kvm_sequence_plan",
             "sequence-authorize": "kvm_sequence_authorize",
             "sequence-execute": "kvm_sequence_execute",
-            "workflow-list": "kvm_workflow_list",
+            "workflow-list": "kvm_workflow_list", "workflow-authorize": "kvm_workflow_authorize",
             "workflow-inspect": "kvm_workflow_inspect",
             "workflow-execute": "kvm_workflow_execute"}[command]
 
@@ -154,6 +158,19 @@ def _sequence_error(command: str, exc: BaseException) -> dict:
     return operation_result(operation=operation, transport="kvm",
                             read_only=command in {"sequence-plan", "workflow-list", "workflow-inspect"},
                             ok=False, state="aborted", error={"code": str(exc)[:300]})
+
+
+def _call_sequence(surface, method: str, *args, **kwargs):
+    """Call adapters that predate token kwargs without weakening real surface."""
+    fn = getattr(surface, method)
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    filtered = {key: value for key, value in kwargs.items()
+                if key in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD
+                                            for p in parameters.values())}
+    return fn(*args, **filtered)
 
 
 def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
@@ -180,7 +197,11 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             print(json.dumps({"ok": False, "error": "provide --token/KVMCTL_TOKEN or --user+--password/KVMCTL_USER+KVMCTL_PASSWORD"}))
             return 2
 
-    surf = SemanticSurface(client, session=session or SessionState(), host_runner=host_runner)
+    loaded_session = session or load_session(__import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=args.url)
+    try:
+        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner, authorization_store=FileAuthorizationStore(__import__('os').environ.get('KVMCTL_AUTH_FILE', '~/.cache/kvmctl/authorization.json')))
+    except TypeError:
+        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner)
     surf.write_enabled = args.yes
     sleep = sleep or _real_sleep
 
@@ -277,28 +298,31 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             elif args.command == "sequence-authorize":
                 out = surf.kvm_sequence_authorize(plan, approved=approved, ttl_s=args.ttl)
             else:
-                out = surf.kvm_sequence_execute(approval_token=args.approval_token)
+                out = _call_sequence(surf, "kvm_sequence_execute",
+                                     approval_token=args.approval_token)
+        elif args.command == "workflow-authorize":
+            need_write(); out = _call_sequence(surf, "kvm_workflow_authorize", args.name, args.revision, approved=True, target=args.target, ttl_s=args.ttl)
         elif args.command == "workflow-list":
             out = surf.kvm_workflow_list()
         elif args.command == "workflow-inspect":
             out = surf.kvm_workflow_inspect(args.name, args.revision, args.target)
         elif args.command == "workflow-execute":
             need_write()
-            out = surf.kvm_workflow_execute(
-                args.name, args.revision, approved=bool(args.yes or args.approval_token),
-                target=args.target, ttl_s=args.ttl)
+            out = _call_sequence(surf, "kvm_workflow_execute",
+                args.name, args.revision, approved=bool(args.yes and not args.approval_token),
+                approval_token=args.approval_token, target=args.target, ttl_s=args.ttl)
         else:  # pragma: no cover
             raise SystemExit(f"unknown command {args.command!r}")
     except PolicyError as exc:
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
-                             "workflow-list", "workflow-inspect", "workflow-execute"}:
+                             "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
             out = _sequence_error(args.command, exc)
         else:
             print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
             return 3
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
-                             "workflow-list", "workflow-inspect", "workflow-execute"}:
+                             "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
             out = _sequence_error(args.command, exc)
         else:
             raise
@@ -307,6 +331,8 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             print(exc.code, file=sys.stderr)
             raise SystemExit(2)
         raise
+    if session is None and hasattr(surf, "session"):
+        save_session(surf.session, __import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=args.url)
     rendered = json.dumps(out)
     if getattr(args, "out", None):
         try:
@@ -315,7 +341,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
                 fh.write("\n")
         except OSError as exc:
             if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
-                                 "workflow-list", "workflow-inspect", "workflow-execute"}:
+                                 "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
                 out = _sequence_error(args.command, exc)
                 rendered = json.dumps(out)
             else:

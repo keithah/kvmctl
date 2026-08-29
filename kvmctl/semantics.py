@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import os
 import tempfile
+from dataclasses import replace
 import time
 from typing import Callable, Optional, Sequence
 
@@ -60,7 +61,7 @@ class SemanticSurface:
         host_profile: Optional[HostProbeProfile] = None,
         workflow_repository: Optional[WorkflowRepository] = None,
         sequence_executor: Optional[SequenceExecutor] = None,
-        journal: Optional[Journal] = None,
+        journal: Optional[Journal] = None, authorization_store=None
     ):
         self.client = client
         self.session = session or SessionState()
@@ -75,7 +76,7 @@ class SemanticSurface:
             journal = Journal(os.path.join(tempfile.gettempdir(), "kvmctl-semantic-journal.jsonl"))
         self.journal = journal
         self.sequence_executor = sequence_executor or SequenceExecutor(
-            client, self.session, journal)
+            client, self.session, journal, authorization_store=authorization_store)
 
     # -- policy conveniences -------------------------------------------------
 
@@ -390,23 +391,25 @@ class SemanticSurface:
         self.policy.require_write("kvm_sequence_authorize")
         planned = self._validated_sequence_record(plan)
         authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
-        return self._sequence_envelope(
+        result = self._sequence_envelope(
             "kvm_sequence_authorize", read_only=False, target=authorization.target,
-            state="authorized", plan_hash=authorization.plan_hash, approval_token=getattr(authorization, "token", None),
-            action_count=len(authorization.plan.actions), expires_at=authorization.expires_at)
+            state="authorized", plan_hash=authorization.plan_hash, action_count=len(authorization.plan.actions), expires_at=authorization.expires_at)
+        # The token is an opaque capability, not a credential; it must be
+        # returned to the caller while never entering the journal.
+        result["evidence"]["approval_token"] = authorization.token
+        return result
 
     def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
                              approved: bool = False, ttl_s: float = 30.0) -> dict:
         self.policy.require_write("kvm_sequence_execute")
         if not approval_token:
-            if approved and not isinstance(self.sequence_executor, SequenceExecutor):
-                planned = self._validated_sequence_record(plan)
-                authorization = self.sequence_executor.authorize(planned, approved=True, ttl_s=ttl_s)
-                result = self.sequence_executor.execute(authorization)
-            else:
-                raise ValueError("approval_token is required; authorize the exact plan first")
-        else:
-            result = self.sequence_executor.execute(approval_token)
+            if plan is not None:
+                # Preserve deterministic plan/target errors ahead of the
+                # missing-token error, without authorizing or executing.
+                self._validated_sequence_record(plan)
+            raise ValueError("approval_token is required; authorize the exact plan first")
+        expected = validate_plan(plan) if plan is not None else None
+        result = self.sequence_executor.execute(approval_token, expected_plan=expected)
         return self._sequence_envelope(
             "kvm_sequence_execute", read_only=False, target=result.target,
             ok=result.ok, state="completed" if result.ok else "aborted",
@@ -430,25 +433,41 @@ class SemanticSurface:
                                        target=workflow.get("target"), state="observed",
                                        workflow=workflow)
 
-    def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool,
-                             target: str | None = None, ttl_s: float = 30.0) -> dict:
+    def kvm_workflow_authorize(self, name: str, revision: str, *, approved: bool,
+                               target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self.policy.require_write("kvm_sequence_authorize")
+        invocation_target = target
+        if invocation_target is None:
+            for definition in self.workflow_repository.list():
+                if definition.name == name and not definition.target_independent: invocation_target = definition.target
+        workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        actual = invocation_target or workflow.target
+        bound = workflow.plan if workflow.plan.target == actual else replace(workflow.plan, target=actual)
+        auth = self.sequence_executor.authorize(self.sequence_executor.plan(bound, workflow_revision=workflow.revision), approved=approved, ttl_s=ttl_s)
+        result = self._sequence_envelope("kvm_workflow_authorize", read_only=False, target=auth.target, state="authorized", plan_hash=auth.plan_hash, workflow_revision=workflow.revision, expires_at=auth.expires_at)
+        result["evidence"]["approval_token"] = auth.token
+        return result
+
+    def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool = False,
+                             approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict:
         self.policy.require_write("kvm_workflow_execute")
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():
-                if definition.name == name and not definition.target_independent:
-                    invocation_target = definition.target
-                    break
+                if definition.name == name and not definition.target_independent: invocation_target = definition.target
         workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
-        result = self.sequence_executor.execute_workflow(
-            workflow, approved=approved, target=invocation_target, ttl_s=ttl_s)
+        if not approval_token:
+            raise ValueError("approval_token is required; authorize the exact workflow first")
+        result = self.sequence_executor.execute(
+            approval_token, expected_plan=workflow.plan,
+            expected_workflow_revision=workflow.revision,
+            expected_target=invocation_target or workflow.target)
         return self._sequence_envelope(
             "kvm_workflow_execute", read_only=False, target=result.target,
             ok=result.ok, state="completed" if result.ok else "aborted",
             plan_hash=result.plan_hash, action_count=len(workflow.plan.actions),
             elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
             execution_status="completed" if result.ok else "aborted",
-            completed_steps=result.completed_steps,
-            cleanup_ok=result.cleanup_ok,
+            completed_steps=result.completed_steps, cleanup_ok=result.cleanup_ok,
             cleanup_status="ok" if result.cleanup_ok else "failed",
             cleanup_errors=list(result.cleanup_errors), error=result.error or None)

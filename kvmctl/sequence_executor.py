@@ -74,8 +74,10 @@ class SequenceExecutor:
     def __init__(self, client, session: SessionState, journal: Journal,
                  *, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
-                 device_id: str | None = None, stream_owned: bool = False):
+                 device_id: str | None = None, stream_owned: bool = False,
+                 authorization_store=None):
         self.client, self.session, self.journal = client, session, journal
+        self.authorization_store = authorization_store
         self.clock, self.sleep = clock, sleep
         # An explicit identity is preferred; a client-derived fallback avoids
         # making unrelated client instances contend on one process-global key.
@@ -118,7 +120,8 @@ class SequenceExecutor:
 
     def _abort(self, *, target: str | None, reason: str,
                plan_hash_value: str | None = None) -> None:
-        details = {"reason": reason}
+        details = {"reason": reason, "final_result": "failure",
+                   "ended_at": time.time(), "duration_ms": 0}
         self._checkpoint("aborted", target=target, plan_hash=plan_hash_value or "", **details)
 
     def plan(self, plan: SequencePlan, *, workflow_revision: str | None = None) -> SequencePlanRecord:
@@ -161,18 +164,53 @@ class SequenceExecutor:
                                      now + ttl_s, planned.workflow_revision,
                                      token=secrets.token_urlsafe(32), session_id=id(self.session))
         self._authorizations[auth.token] = auth
+        if self.authorization_store is not None:
+            self.authorization_store.put(auth)
         self._checkpoint("authorized", target=auth.target, plan_hash=auth.plan_hash,
                          expires_at=auth.expires_at, workflow_revision=auth.workflow_revision)
         return auth
 
-    def execute(self, authorization: SequenceAuthorization | str) -> SequenceExecutionResult:
+    def execute(self, authorization: SequenceAuthorization | str, *,
+                expected_plan: SequencePlan | None = None,
+                expected_workflow_revision: str | None = None,
+                expected_target: str | None = None) -> SequenceExecutionResult:
         start = self.clock()
-        if isinstance(authorization, str):
-            authorization = self._authorizations.get(authorization)
+        token = authorization if isinstance(authorization, str) else None
+        from_store = False
+        if token is not None:
+            authorization = self._authorizations.get(token)
+            if authorization is None and self.authorization_store is not None:
+                peek = getattr(self.authorization_store, "peek", None)
+                authorization = peek(token) if peek is not None else self.authorization_store.take(token)
+                from_store = authorization is not None
         if not isinstance(authorization, SequenceAuthorization) or not authorization.token:
+            self._checkpoint("aborted", target=None, plan_hash="", reason="authorization missing",
+                             final_result="failure", ended_at=time.time(), duration_ms=0)
             return SequenceExecutionResult(False, True, "", "", error="authorization missing")
+        # Validate the caller's control fields before consuming the single-use
+        # record.  This prevents a valid token being burned by a mismatched
+        # workflow invocation or an inline plan.
+        if expected_plan is not None and plan_hash(validate_plan(expected_plan)) != authorization.plan_hash:
+            return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                           error="plan mismatch")
+        if expected_workflow_revision is not None and authorization.workflow_revision != expected_workflow_revision:
+            return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                           error="workflow revision mismatch")
+        if expected_target is not None and authorization.target != expected_target:
+            return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                           error="workflow target mismatch")
+        if self.authorization_store is not None:
+            consumed = self.authorization_store.take(authorization.token)
+            if consumed is None:
+                return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
+                                               error="authorization used")
+            # Use the authenticated persisted record, not caller state.
+            authorization = consumed
         registered = self._authorizations.get(authorization.token)
-        if registered is not authorization or authorization.session_id != id(self.session):
+        if self.authorization_store is not None and registered is None:
+            registered = authorization
+
+        if registered is not authorization or (self.authorization_store is None and authorization.session_id != id(self.session)):
             return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
                                            error="authorization invalid")
         if authorization.token in self._used_authorizations:
@@ -306,8 +344,9 @@ class SequenceExecutor:
                              plan_hash="", evidence="mismatch")
             raise RuntimeError("screen assertion failed")
 
-    def execute_workflow(self, workflow: WorkflowDefinition, *, approved: bool,
-                         target: Optional[str] = None, ttl_s: float = 30.0) -> SequenceExecutionResult:
+    def execute_workflow(self, workflow: WorkflowDefinition, *, approval_token: str | None = None,
+                         approved: bool = False, target: Optional[str] = None,
+                         ttl_s: float = 30.0) -> SequenceExecutionResult:
         actual_target = target or workflow.resolved_target or workflow.target
         if workflow._derived_revision() != workflow.revision:
             self._abort(target=actual_target, reason="workflow revision mismatch")
@@ -322,4 +361,8 @@ class SequenceExecutor:
         if bound.target != actual_target:
             bound = replace(bound, target=actual_target)
         planned = self.plan(bound, workflow_revision=workflow.revision)
-        return self.execute(self.authorize(planned, approved=approved, ttl_s=ttl_s))
+        if not approval_token:
+            raise ValueError("approval_token is required; authorize the exact workflow first")
+        return self.execute(approval_token, expected_plan=bound,
+                            expected_workflow_revision=workflow.revision,
+                            expected_target=actual_target)

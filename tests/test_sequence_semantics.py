@@ -27,9 +27,12 @@ class FakeExecutor:
 
     def authorize(self, planned, *, approved, ttl_s=30.0):
         self.authorizations.append((planned, approved, ttl_s))
-        return type("Authorization", (), {"plan": planned.plan, "target": planned.target, "plan_hash": planned.plan_hash, "expires_at": 9999999999, "workflow_revision": planned.workflow_revision})()
+        return type("Authorization", (), {"plan": planned.plan, "target": planned.target, "plan_hash": planned.plan_hash, "expires_at": 9999999999, "workflow_revision": planned.workflow_revision, "token": "fake-token"})()
 
-    def execute(self, authorization):
+    def execute(self, authorization, **kwargs):
+        if isinstance(authorization, str):
+            authorization = self.authorizations[-1][0]
+            authorization = type("Authorization", (), {"target": authorization.target, "plan_hash": authorization.plan_hash})()
         self.executions.append(authorization)
         return type("Result", (), {"ok": True, "cleanup_ok": True, "target": authorization.target, "plan_hash": authorization.plan_hash, "elapsed_ms": 4, "completed_steps": 1, "error": "", "cleanup_errors": ()})()
 
@@ -69,7 +72,7 @@ def test_sequence_authorize_and_execute_require_write_gate():
     surf.write_enabled = True
     authorized = surf.kvm_sequence_authorize(PLAN, approved=True)
     assert authorized["operation"] == "kvm_sequence_authorize"
-    executed = surf.kvm_sequence_execute(PLAN, approved=True)
+    executed = surf.kvm_sequence_execute(PLAN, approval_token="fake-token")
     assert executed["operation"] == "kvm_sequence_execute"
     assert executed["evidence"]["cleanup_ok"] is True
     assert executed["evidence"]["completed_steps"] == 1
@@ -80,8 +83,10 @@ def test_inline_and_named_workflow_share_executor_and_envelope():
     repository = WorkflowRepository.from_mappings([raw])
     executor = FakeExecutor()
     surf = surface(write_enabled=True, executor=executor, repository=repository)
-    inline = surf.kvm_sequence_execute(PLAN, approved=True)
-    named = surf.kvm_workflow_execute("hello", repository.list()[0].revision, approved=True)
+    inline_auth = surf.kvm_sequence_authorize(PLAN, approved=True)
+    inline = surf.kvm_sequence_execute(PLAN, approval_token=inline_auth["evidence"]["approval_token"])
+    named_auth = surf.kvm_sequence_authorize(PLAN, approved=True)
+    named = surf.kvm_workflow_execute("hello", repository.list()[0].revision, approval_token=named_auth["evidence"]["approval_token"])
     assert inline["operation"] == "kvm_sequence_execute"
     assert named["operation"] == "kvm_workflow_execute"
     assert inline["evidence"]["plan_hash"] == named["evidence"]["plan_hash"]
@@ -102,13 +107,15 @@ def test_workflow_list_and_inspect_are_read_only():
 
 def test_execution_error_is_top_level_and_redacted():
     class FailingExecutor(FakeExecutor):
-        def execute(self, authorization):
+        def execute(self, authorization, **kwargs):
+            if isinstance(authorization, str):
+                authorization = type("Authorization", (), {"target": "pve1", "plan_hash": plan_hash(PLAN)})()
             return type("Result", (), {"ok": False, "cleanup_ok": True, "target": authorization.target,
                                         "plan_hash": authorization.plan_hash, "elapsed_ms": 4,
                                         "completed_steps": 0, "error": "secret backend detail",
                                         "cleanup_errors": ()})()
 
-    result = surface(write_enabled=True, executor=FailingExecutor()).kvm_sequence_execute(PLAN, approved=True)
+    result = surface(write_enabled=True, executor=FailingExecutor()).kvm_sequence_execute(PLAN, approval_token="fake-token")
     assert result["error"] == {"code": "secret backend detail", "retryable": False, "requires_human": False}
     assert "error" not in result["evidence"]
 

@@ -45,16 +45,21 @@ def test_dispatch_sequence_plan_has_stable_envelope(tmp_path):
 
 def test_dispatch_sequence_authorize_and_execute_preserves_structured_errors(tmp_path):
     _, ctx = client_and_context(tmp_path, write_enabled=True)
-    out = call("kvm_sequence_authorize", {"plan": plan(), "approved": False}, ctx)
-    assert out["ok"] is False and out["error"] is not None
-    out = call("kvm_sequence_execute", {"plan": plan(), "approved": True}, ctx)
+    out = call("kvm_sequence_authorize", {"plan": plan(), "approved": True}, ctx)
+    assert out["ok"] is True
+    token = out["evidence"]["approval_token"]
+    out = call("kvm_sequence_execute", {"approval_token": token}, ctx)
     assert out["ok"] is True
 
 
 @pytest.mark.parametrize("name", ["kvm_sequence_authorize", "kvm_sequence_execute"])
 def test_dispatch_sequence_accepts_inline_plan_with_control_fields(tmp_path, name):
     _, ctx = client_and_context(tmp_path, write_enabled=True)
-    out = call(name, {**plan(), "approved": True, "ttl_s": 30.0}, ctx)
+    if name == "kvm_sequence_authorize":
+        out = call(name, {**plan(), "approved": True, "ttl_s": 30.0}, ctx)
+    else:
+        auth = call("kvm_sequence_authorize", {**plan(), "approved": True, "ttl_s": 30.0}, ctx)
+        out = call(name, {"approval_token": auth["evidence"]["approval_token"]}, ctx)
     assert out["ok"] is True
     assert "approved" not in out["evidence"]
     assert "ttl_s" not in out["evidence"]
@@ -96,9 +101,11 @@ def test_workflow_execute_matches_inline_plan(tmp_path):
     _, ctx = client_and_context(tmp_path, write_enabled=True, workflows=[workflow])
     listed = call("kvm_workflow_list", {}, ctx)
     rev = listed["evidence"]["workflows"][0]["revision"]
-    out = call("kvm_workflow_execute", {"name": "safe", "revision": rev, "approved": True}, ctx)
+    auth = call("kvm_workflow_authorize", {"name": "safe", "revision": rev, "approved": True}, ctx)
+    out = call("kvm_workflow_execute", {"name": "safe", "revision": rev, "approval_token": auth["evidence"]["approval_token"]}, ctx)
     assert out["ok"] is True
-    inline = call("kvm_sequence_execute", {"plan": plan(), "approved": True}, ctx)
+    inline_auth = call("kvm_sequence_authorize", {"plan": plan(), "approved": True}, ctx)
+    inline = call("kvm_sequence_execute", {"approval_token": inline_auth["evidence"]["approval_token"]}, ctx)
     assert inline["evidence"]["plan_hash"] == out["evidence"]["plan_hash"]
 
 

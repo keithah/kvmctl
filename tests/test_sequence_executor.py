@@ -97,9 +97,13 @@ def test_workflow_revision_is_bound(tmp_path):
     from kvmctl.workflows import WorkflowDefinition
     definition = WorkflowDefinition.from_mapping({"name":"demo","target":"pve2","steps":[{"type":"release_all"}]})
     ex = make_executor(tmp_path)
-    auth = ex.execute_workflow(definition, approved=True)
-    assert isinstance(auth, SequenceExecutionResult)
-    assert auth.ok
+    planned = ex.plan(definition.plan, workflow_revision=definition.revision)
+    auth = ex.authorize(planned, approved=True)
+    result = ex.execute(auth, expected_plan=definition.plan,
+                        expected_workflow_revision=definition.revision,
+                        expected_target=definition.target)
+    assert isinstance(result, SequenceExecutionResult)
+    assert result.ok
 
 
 def test_changed_hash_and_authorization_target_are_rejected(tmp_path):

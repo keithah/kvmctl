@@ -73,7 +73,7 @@ def test_fastmcp_registers_shared_tools():
                      "kvm_mouse_click", "kvm_mouse_scroll", "kvm_status",
                      "kvm_screenshot_to_file", "kvm_ocr_screenshot", "kvm_ocr_click",
                      "kvm_sequence_plan", "kvm_sequence_authorize", "kvm_sequence_execute",
-                     "kvm_workflow_list", "kvm_workflow_inspect", "kvm_workflow_execute"}
+                     "kvm_workflow_authorize", "kvm_workflow_list", "kvm_workflow_inspect", "kvm_workflow_execute"}
 
 
 def test_mcp_snapshot_returns_native_image_content():

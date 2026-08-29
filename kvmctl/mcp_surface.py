@@ -33,6 +33,7 @@ TOOL_SPEC = list(_BASE_TOOL_SPEC) + [
     {"name": "kvm_sequence_plan", "read_only": True},
     {"name": "kvm_sequence_authorize", "write_gate": True},
     {"name": "kvm_sequence_execute", "write_gate": True},
+    {"name": "kvm_workflow_authorize", "write_gate": True},
     {"name": "kvm_workflow_list", "read_only": True},
     {"name": "kvm_workflow_inspect", "read_only": True},
     {"name": "kvm_workflow_execute", "write_gate": True},
@@ -42,7 +43,8 @@ _TOOL_NAMES = frozenset(t["name"] for t in TOOL_SPEC)
 
 def _surface(context: dict) -> SemanticSurface:
     client: KvmClient = context["client"]
-    return SemanticSurface(
+    executor = context.get("sequence_executor") or context.get("_sequence_executor")
+    surface = SemanticSurface(
         client,
         session=context.get("session") or SessionState(),
         write_enabled=bool(context.get("write_enabled")),
@@ -51,13 +53,17 @@ def _surface(context: dict) -> SemanticSurface:
         host_runner=context.get("host_runner"),
         host_profile=context.get("host_profile"),
         workflow_repository=context.get("workflow_repository"),
-        sequence_executor=context.get("sequence_executor"),
+        sequence_executor=executor,
         journal=context.get("journal"),
+        authorization_store=context.get("authorization_store"),
     )
+    if executor is None:
+        context["_sequence_executor"] = surface.sequence_executor
+    return surface
 
 
 _SEQUENCE_TOOLS = frozenset({"kvm_sequence_plan", "kvm_sequence_authorize",
-                             "kvm_sequence_execute", "kvm_workflow_list",
+                             "kvm_sequence_execute", "kvm_workflow_authorize", "kvm_workflow_list",
                              "kvm_workflow_inspect", "kvm_workflow_execute"})
 
 # Keep dispatcher validation explicit: unlike FastMCP's generated schemas,
@@ -69,9 +75,10 @@ _WORKFLOW_SCHEMAS = {
     "kvm_sequence_plan": _PLAN_FIELDS,
     "kvm_sequence_authorize": _SEQUENCE_FIELDS,
     "kvm_sequence_execute": _SEQUENCE_FIELDS,
+    "kvm_workflow_authorize": frozenset({"name", "revision", "approved", "target", "ttl_s"}),
     "kvm_workflow_list": frozenset(),
     "kvm_workflow_inspect": frozenset({"name", "revision", "target"}),
-    "kvm_workflow_execute": frozenset({"name", "revision", "approved", "target", "ttl_s"}),
+    "kvm_workflow_execute": frozenset({"name", "revision", "approved", "approval_token", "target", "ttl_s"}),
 }
 
 
@@ -88,7 +95,7 @@ def _decode_plan(arguments: dict) -> object:
     # Sequence control fields belong to the dispatcher call, not the plan.
     if "target" in arguments or "actions" in arguments:
         return {key: value for key, value in arguments.items()
-                if key not in {"approved", "ttl_s"}}
+                if key not in {"approved", "ttl_s", "approval_token"}}
     encoded = arguments.get("plan_b64")
     if encoded is None:
         raise ValueError("plan is required")
@@ -159,14 +166,17 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
                     approved=bool(arguments.get("approved", False)), ttl_s=float(arguments.get("ttl_s", 30.0)))
             elif name == "kvm_sequence_execute":
                 out = surf.kvm_sequence_execute(
+                    _decode_plan(arguments) if ("plan" in arguments or "plan_b64" in arguments or "target" in arguments or "actions" in arguments) else None,
                     approval_token=arguments.get("approval_token"))
+            elif name == "kvm_workflow_authorize":
+                out = surf.kvm_workflow_authorize(arguments["name"], arguments["revision"], approved=bool(arguments.get("approved", False)), target=arguments.get("target"), ttl_s=float(arguments.get("ttl_s", 30.0)))
             elif name == "kvm_workflow_list":
                 out = surf.kvm_workflow_list()
             elif name == "kvm_workflow_inspect":
                 out = surf.kvm_workflow_inspect(arguments["name"], arguments.get("revision"), arguments.get("target"))
             else:
                 out = surf.kvm_workflow_execute(arguments["name"], arguments["revision"],
-                    approved=bool(arguments.get("approved", False)), target=arguments.get("target"),
+                    approved=bool(arguments.get("approved", False)), approval_token=arguments.get("approval_token"), target=arguments.get("target"),
                     ttl_s=float(arguments.get("ttl_s", 30.0)))
             return json.dumps(out)
         if name == "capabilities":

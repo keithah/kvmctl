@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -13,6 +14,7 @@ from kvmctl.mcp_surface import dispatch_tool
 from kvmctl.semantics import SemanticSurface
 from kvmctl.workflows import WorkflowRepository
 from kvmctl.machines import SessionState
+from kvmctl.session_store import FileAuthorizationStore
 
 
 def client_from_env(*, return_settings: bool = False):
@@ -33,6 +35,8 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
         "KVMCTL_WRITE_ENABLED and remain subject to operation policy."
     ))
     session = session or SessionState()
+    authorization_store = FileAuthorizationStore(
+        os.environ.get("KVMCTL_AUTH_FILE", "~/.cache/kvmctl/authorization.json"))
 
     def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         raw = dispatch_tool(name, arguments, context={
@@ -45,6 +49,7 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
             "workflow_repository": workflow_repository or WorkflowRepository(()),
             "sequence_executor": sequence_executor,
             "journal": journal,
+            "authorization_store": authorization_store,
         })
         return json.loads(raw)
 
@@ -175,11 +180,15 @@ def build_mcp_server(*, client=None, settings: Settings | None = None,
     def kvm_workflow_inspect(name: str, revision: str | None = None, target: str | None = None) -> dict[str, Any]:
         return call("kvm_workflow_inspect", {"name": name, "revision": revision, "target": target})
 
+    @server.tool(name="kvm_workflow_authorize", description="Authorize a named KVM workflow.")
+    def kvm_workflow_authorize(name: str, revision: str, approved: bool = False, target: str | None = None, ttl_s: float = 30.0) -> dict[str, Any]:
+        return call("kvm_workflow_authorize", {"name": name, "revision": revision, "approved": approved, "target": target, "ttl_s": ttl_s})
+
     @server.tool(name="kvm_workflow_execute", description="Execute an approved named KVM workflow.")
     def kvm_workflow_execute(name: str, revision: str, approved: bool = False,
-                             target: str | None = None, ttl_s: float = 30.0) -> dict[str, Any]:
+                             approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict[str, Any]:
         return call("kvm_workflow_execute", {"name": name, "revision": revision,
-                                             "approved": approved, "target": target, "ttl_s": ttl_s})
+                                             "approved": approved, "approval_token": approval_token, "target": target, "ttl_s": ttl_s})
 
     return server
 
