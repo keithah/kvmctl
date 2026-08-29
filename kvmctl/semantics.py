@@ -10,6 +10,8 @@ semantic operations below exist.
 from __future__ import annotations
 
 import base64
+import os
+import tempfile
 import time
 from typing import Callable, Optional, Sequence
 
@@ -26,6 +28,10 @@ from kvmctl.machines import (
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
 from kvmctl.host import ArgvRunner, HostAdapter, HostProbeProfile, run_probe
 from kvmctl.results import operation_result
+from kvmctl.journal import Journal
+from kvmctl.sequences import validate_plan
+from kvmctl.sequence_executor import SequenceExecutor
+from kvmctl.workflows import WorkflowRepository, list_workflows, inspect_workflow, resolve_workflow
 
 
 def _evidence(operation: str, transport: str, read_only: bool,
@@ -52,6 +58,9 @@ class SemanticSurface:
         ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
         host_runner: Optional[ArgvRunner] = None,
         host_profile: Optional[HostProbeProfile] = None,
+        workflow_repository: Optional[WorkflowRepository] = None,
+        sequence_executor: Optional[SequenceExecutor] = None,
+        journal: Optional[Journal] = None,
     ):
         self.client = client
         self.session = session or SessionState()
@@ -61,6 +70,12 @@ class SemanticSurface:
             ssh_runner=ssh_runner,
         )
         self.host = HostAdapter(host_runner, profile=host_profile) if host_runner is not None else None
+        self.workflow_repository = workflow_repository or WorkflowRepository(())
+        if journal is None:
+            journal = Journal(os.path.join(tempfile.gettempdir(), "kvmctl-semantic-journal.jsonl"))
+        self.journal = journal
+        self.sequence_executor = sequence_executor or SequenceExecutor(
+            client, self.session, journal)
 
     # -- policy conveniences -------------------------------------------------
 
@@ -324,3 +339,79 @@ class SemanticSurface:
             )
         result = self.policy.run_ssh(command)
         return _evidence("exec_command", "ssh", read_only=False, **result)
+
+    # -- target-bound sequence and workflow operations -----------------------
+
+    @staticmethod
+    def _sequence_envelope(operation: str, *, read_only: bool, target=None,
+                           ok=True, state="planned", **evidence) -> dict:
+        return operation_result(operation=operation, transport="kvm",
+                                read_only=read_only, target=target, ok=ok,
+                                state=state, evidence=evidence)
+
+    def kvm_sequence_plan(self, plan) -> dict:
+        planned = self.sequence_executor.plan(validate_plan(plan))
+        return self._sequence_envelope(
+            "kvm_sequence_plan", read_only=True, target=planned.target,
+            plan_hash=planned.plan_hash, action_count=planned.action_count,
+            max_duration_ms=planned.max_duration_ms)
+
+    def kvm_sequence_authorize(self, plan, *, approved: bool,
+                               ttl_s: float = 30.0) -> dict:
+        self.policy.require_write("kvm_sequence_authorize")
+        planned = plan if hasattr(plan, "plan_hash") else self.sequence_executor.plan(validate_plan(plan))
+        authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
+        return self._sequence_envelope(
+            "kvm_sequence_authorize", read_only=False, target=authorization.target,
+            state="authorized", plan_hash=authorization.plan_hash,
+            action_count=len(authorization.plan.actions), expires_at=authorization.expires_at)
+
+    def kvm_sequence_execute(self, plan, *, approved: bool = False,
+                             ttl_s: float = 30.0) -> dict:
+        self.policy.require_write("kvm_sequence_execute")
+        planned = plan if hasattr(plan, "plan_hash") else self.sequence_executor.plan(validate_plan(plan))
+        authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
+        result = self.sequence_executor.execute(authorization)
+        return self._sequence_envelope(
+            "kvm_sequence_execute", read_only=False, target=result.target,
+            ok=result.ok, state="completed" if result.ok else "aborted",
+            plan_hash=result.plan_hash, action_count=len(authorization.plan.actions),
+            elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
+            execution_status="completed" if result.ok else "aborted",
+            cleanup_ok=result.cleanup_ok,
+            cleanup_status="ok" if result.cleanup_ok else "failed",
+            cleanup_errors=list(result.cleanup_errors), error=result.error or None)
+
+    def kvm_workflow_list(self) -> dict:
+        workflows = list_workflows(self.workflow_repository)
+        return self._sequence_envelope("kvm_workflow_list", read_only=True,
+                                       state="observed", workflows=workflows)
+
+    def kvm_workflow_inspect(self, name: str, revision: str | None = None,
+                             target: str | None = None) -> dict:
+        workflow = inspect_workflow(self.workflow_repository, name, revision, target)
+        return self._sequence_envelope("kvm_workflow_inspect", read_only=True,
+                                       target=workflow.get("target"), state="observed",
+                                       workflow=workflow)
+
+    def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool,
+                             target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self.policy.require_write("kvm_workflow_execute")
+        invocation_target = target
+        if invocation_target is None:
+            for definition in self.workflow_repository.list():
+                if definition.name == name and not definition.target_independent:
+                    invocation_target = definition.target
+                    break
+        workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        result = self.sequence_executor.execute_workflow(
+            workflow, approved=approved, target=invocation_target, ttl_s=ttl_s)
+        return self._sequence_envelope(
+            "kvm_workflow_execute", read_only=False, target=result.target,
+            ok=result.ok, state="completed" if result.ok else "aborted",
+            plan_hash=result.plan_hash, action_count=len(workflow.plan.actions),
+            elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
+            execution_status="completed" if result.ok else "aborted",
+            cleanup_ok=result.cleanup_ok,
+            cleanup_status="ok" if result.cleanup_ok else "failed",
+            cleanup_errors=list(result.cleanup_errors), error=result.error or None)
