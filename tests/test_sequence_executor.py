@@ -80,6 +80,14 @@ def test_rejects_unverified_or_mismatched_target_and_expired_authorization(tmp_p
     assert not result.ok and "expired" in result.error
 
 
+@pytest.mark.parametrize("ttl", [float("nan"), float("inf"), float("-inf"), 30.001])
+def test_authorize_rejects_nonfinite_and_overlong_ttl(tmp_path, ttl):
+    ex = make_executor(tmp_path)
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]})
+    with pytest.raises(ValueError, match="ttl"):
+        ex.authorize(planned, approved=True, ttl_s=ttl)
+
+
 def test_stops_after_action_failure_and_cleanup_failure_is_unsuccessful(tmp_path):
     client = FakeClient(); client.fail_on = "text"
     ex = make_executor(tmp_path, client)
@@ -132,6 +140,26 @@ def test_execute_rejects_authorization_target_mismatch_and_journals_abort(tmp_pa
     assert records[-1]["transition"] == "aborted"
     assert records[-1]["target"] == "pve1"
     assert records[-1]["reason"] == "authorization target mismatch"
+    assert records[-1]["final_result"] == "failure"
+    assert "ended_at" in records[-1] and "duration_ms" in records[-1]
+
+
+def test_replayed_authorization_is_journaled_with_bound_identity(tmp_path):
+    ex = make_executor(tmp_path)
+    authorization = ex.authorize(
+        ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]}),
+        approved=True,
+    )
+    assert ex.execute(authorization).ok
+    replay = ex.execute(authorization.token)
+    assert not replay.ok and replay.error == "authorization used"
+    records = [json.loads(line) for line in (tmp_path / "journal.jsonl").read_text().splitlines()]
+    assert records[-1]["transition"] == "aborted"
+    assert records[-1]["target"] == authorization.target
+    assert records[-1]["plan_hash"] == authorization.plan_hash
+    assert records[-1]["final_result"] == "failure"
+    assert "timestamp" in records[-1] and "duration_ms" in records[-1]
+    assert "target_verification" in records[-1]
 
 
 def test_lock_conflict_is_journaled_and_deadline_checked_after_last_action(tmp_path):

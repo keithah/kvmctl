@@ -16,7 +16,7 @@ from kvmctl.client import KvmClient
 from kvmctl.machines import SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
-from kvmctl.results import operation_result
+from kvmctl.results import normalize_error, operation_result
 from kvmctl.host import ArgvRunner
 from kvmctl.session_store import load_session, save_session, FileAuthorizationStore
 
@@ -157,7 +157,7 @@ def _sequence_error(command: str, exc: BaseException) -> dict:
     operation = _sequence_operation(command)
     return operation_result(operation=operation, transport="kvm",
                             read_only=command in {"sequence-plan", "workflow-list", "workflow-inspect"},
-                            ok=False, state="aborted", error={"code": str(exc)[:300]})
+                            ok=False, state="aborted", error={"code": normalize_error(exc) or "operation failed"})
 
 
 def _call_sequence(surface, method: str, *args, **kwargs):
@@ -317,7 +317,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                              "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
             try:
-                surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+                surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
             except Exception:
                 pass
             out = _sequence_error(args.command, exc)
@@ -328,7 +328,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
         if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                              "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
             try:
-                surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+                surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
             except Exception:
                 pass
             out = _sequence_error(args.command, exc)
@@ -357,7 +357,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
                                  "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
                 try:
-                    surf.sequence_executor.reject(str(exc), target=getattr(args, "target", None))
+                    surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
                 except Exception:
                     pass
                 out = _sequence_error(args.command, exc)

@@ -28,7 +28,7 @@ from kvmctl.machines import (
 )
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
 from kvmctl.host import ArgvRunner, HostAdapter, HostProbeProfile, run_probe
-from kvmctl.results import operation_result
+from kvmctl.results import normalize_error, operation_result
 from kvmctl.journal import Journal
 from kvmctl.sequences import validate_plan, plan_hash
 from kvmctl.sequence_executor import SequenceExecutor, SequencePlanRecord
@@ -385,7 +385,7 @@ class SemanticSurface:
         except PolicyError as exc:
             reject = getattr(self.sequence_executor, "reject", None)
             if reject is not None:
-                reject(str(exc), target=target, plan_hash_value=plan_hash_value)
+                reject(normalize_error(exc) or "operation rejected", target=target, plan_hash_value=plan_hash_value)
             raise
 
     def kvm_sequence_plan(self, plan) -> dict:
@@ -457,7 +457,7 @@ class SemanticSurface:
         try:
             workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
         except (TypeError, ValueError, KeyError) as exc:
-            self.sequence_executor.reject(str(exc), target=invocation_target)
+            self.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=invocation_target)
             raise
         actual = invocation_target or workflow.target
         bound = workflow.plan if workflow.plan.target == actual else replace(workflow.plan, target=actual)
@@ -476,7 +476,7 @@ class SemanticSurface:
         try:
             workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
         except (TypeError, ValueError, KeyError) as exc:
-            self.sequence_executor.reject(str(exc), target=invocation_target)
+            self.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=invocation_target)
             raise
         if not approval_token:
             self.sequence_executor.reject("authorization missing", target=invocation_target or workflow.target,

@@ -6,12 +6,14 @@ import secrets
 import time
 from typing import Callable, Optional
 import hashlib
+import math
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from .journal import Journal
 from .machines import SessionState, device_lock
 from .sequences import SequencePlan, validate_plan, plan_hash
 from .workflows import WorkflowDefinition
+from .results import normalize_error
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ def _failure_reason(exc: BaseException, *, phase: str = "action") -> str:
         return "deadline exceeded"
     if isinstance(exc, RuntimeError) and str(exc) in {"screen assertion failed", "screen assertion unavailable"}:
         return str(exc)
-    return f"{phase} failed"
+    return normalize_error(exc, default=f"{phase} failed") or f"{phase} failed"
 
 
 def asyncio_cancelled_type():
@@ -76,6 +78,7 @@ def asyncio_cancelled_type():
 class SequenceExecutor:
     SCREEN_MAX_BYTES = 4 * 1024 * 1024
     SCREEN_MAX_TEXT = 1 * 1024 * 1024
+    MAX_AUTHORIZATION_TTL_S = 30.0
 
     def __init__(self, client, session: SessionState, journal: Journal,
                  *, clock: Callable[[], float] = time.monotonic,
@@ -124,6 +127,7 @@ class SequenceExecutor:
     def reject(self, reason: str, *, target=None, plan_hash_value="", start=None) -> None:
         # Rejections may happen before a canonical plan exists, but the journal
         # still gets a non-empty, deterministic evidence identifier.
+        reason = normalize_error(reason, default="operation rejected") or "operation rejected"
         if not plan_hash_value:
             plan_hash_value = "sha256:" + hashlib.sha256(reason.encode("utf-8")).hexdigest()
         ended = time.time()
@@ -142,7 +146,8 @@ class SequenceExecutor:
     def _abort_preflight(self, authorization: SequenceAuthorization, reason: str) -> None:
         self._checkpoint("aborted", target=authorization.target,
                          plan_hash=authorization.plan_hash, reason=reason,
-                         final_result="failure", ended_at=time.time(), duration_ms=0)
+                         target_verification=(authorization.plan.target == authorization.target),
+                         final_result="failure", started_at=time.time(), ended_at=time.time(), duration_ms=0)
 
     def _abort(self, *, target: str | None, reason: str,
                plan_hash_value: str | None = None) -> None:
@@ -181,10 +186,12 @@ class SequenceExecutor:
             self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
                         reason="plan must be approved")
             raise ValueError("plan must be approved")
-        if ttl_s <= 0:
+        if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
+                or not math.isfinite(ttl_s)
+                or not (0 < ttl_s <= self.MAX_AUTHORIZATION_TTL_S)):
             self._abort(target=planned.target, plan_hash_value=planned.plan_hash,
-                        reason="authorization ttl must be positive")
-            raise ValueError("authorization ttl must be positive")
+                        reason="authorization ttl invalid")
+            raise ValueError("authorization ttl must be finite and between 0 and 30 seconds")
         now = self.clock()
         auth = SequenceAuthorization(planned.plan, planned.target, planned.plan_hash,
                                      now + ttl_s, planned.workflow_revision,
@@ -242,9 +249,11 @@ class SequenceExecutor:
             registered = authorization
 
         if self.authorization_store is None and (registered is not authorization or authorization.session_id != id(self.session)):
+            self._abort_preflight(authorization, "authorization invalid")
             return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
                                            error="authorization invalid")
         if authorization.token in self._used_authorizations:
+            self._abort_preflight(authorization, "authorization used")
             return SequenceExecutionResult(False, True, authorization.target, authorization.plan_hash,
                                            error="authorization used")
         self._used_authorizations.add(authorization.token)

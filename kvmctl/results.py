@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 import re
 from typing import Any, TypedDict
 
+from kvmctl.policy import PolicyError
+
 
 _SENSITIVE_KEY = re.compile(
     r"(?i)(?:pass(?:word|wd)?|token|secret|private[_ -]?key|credential|api[_ -]?key|authorization|cookie)"
@@ -23,6 +25,43 @@ def _safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_safe(item) for item in value]
     return value
+
+
+_SAFE_ERROR_MESSAGES = frozenset({
+    "authorization expired", "authorization invalid", "authorization missing",
+    "authorization used", "authorization target mismatch", "device lock conflict",
+    "deadline exceeded", "invalid input", "operation failed", "operation rejected",
+    "permission denied", "policy refused", "backend unavailable",
+    "plan hash changed", "plan mismatch", "plan must be approved",
+    "screen assertion failed", "screen assertion unavailable", "target mismatch",
+    "target mismatch or session not verified", "target session is not verified",
+    "workflow revision mismatch", "workflow target mismatch",
+    "write_disabled", "host_reboot_timeout", "host_identity_mismatch",
+})
+
+
+def normalize_error(error: BaseException | str | None, *, default: str = "operation failed") -> str | None:
+    """Convert untrusted exception text into a small safe public error code."""
+    if error is None:
+        return None
+    text = error if isinstance(error, str) else str(error)
+    if text in _SAFE_ERROR_MESSAGES:
+        return text
+    if text.startswith("unsupported argument"):
+        return "unsupported argument"
+    if text.startswith("invalid argument"):
+        return "invalid argument"
+    if text.startswith("duration_ms must be finite numeric"):
+        return "duration_ms must be finite numeric"
+    if isinstance(error, PolicyError):
+        return "policy refused"
+    if isinstance(error, (TypeError, ValueError, KeyError)):
+        return "invalid input"
+    if isinstance(error, PermissionError):
+        return "permission denied"
+    if isinstance(error, OSError):
+        return "backend unavailable"
+    return default if default in _SAFE_ERROR_MESSAGES else "operation failed"
 
 
 class OperationError(TypedDict, total=False):
@@ -52,11 +91,12 @@ def _normalise_error(error: Mapping[str, Any] | str | None) -> OperationError | 
     if error is None:
         return None
     if isinstance(error, str):
-        return {"code": error, "retryable": False, "requires_human": False}
-    result: OperationError = dict(error)  # type: ignore[assignment]
-    result.setdefault("code", "operation_failed")
-    result.setdefault("retryable", False)
-    result.setdefault("requires_human", False)
+        return {"code": normalize_error(error), "retryable": False, "requires_human": False}
+    result: OperationError = {
+        "code": normalize_error(error.get("code"), default="operation failed") or "operation failed",
+        "retryable": bool(error.get("retryable", False)),
+        "requires_human": bool(error.get("requires_human", False)),
+    }
     return result
 
 
@@ -121,4 +161,4 @@ operation_result.from_legacy = _from_legacy  # type: ignore[attr-defined]
 # Explicit alias for callers that prefer a verb-style builder.
 build_result = operation_result
 
-__all__ = ["OperationError", "OperationResult", "build_result", "operation_result"]
+__all__ = ["OperationError", "OperationResult", "build_result", "normalize_error", "operation_result"]

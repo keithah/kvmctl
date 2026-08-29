@@ -27,7 +27,7 @@ from kvmctl.operations import TOOL_SPEC as _BASE_TOOL_SPEC
 from kvmctl.policy import PolicyError, TRANSPORTS
 from kvmctl.semantics import SemanticSurface
 from kvmctl.host import HostProbeProfile
-from kvmctl.results import operation_result
+from kvmctl.results import normalize_error, operation_result
 
 TOOL_SPEC = list(_BASE_TOOL_SPEC) + [
     {"name": "kvm_sequence_plan", "read_only": True},
@@ -85,7 +85,7 @@ _WORKFLOW_SCHEMAS = {
 def _sequence_error(name: str, exc: BaseException) -> str:
     return json.dumps(operation_result(operation=name, transport="kvm",
         read_only=name in {"kvm_sequence_plan", "kvm_workflow_list", "kvm_workflow_inspect"},
-        ok=False, state="aborted", error={"code": str(exc)[:300]}))
+        ok=False, state="aborted", error={"code": normalize_error(exc) or "operation failed"}))
 
 
 def _decode_plan(arguments: dict) -> object:
@@ -278,7 +278,7 @@ def dispatch_tool(name: str, arguments: Optional[dict], *,
         # Policy refusals and device errors become structured payloads, never raises.
         if name in _SEQUENCE_TOOLS:
             try:
-                surf.sequence_executor.reject(str(exc), target=arguments.get("target"))
+                surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=arguments.get("target"))
             except Exception:
                 pass
             return _sequence_error(name, exc)

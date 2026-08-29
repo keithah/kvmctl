@@ -116,7 +116,7 @@ def test_execution_error_is_top_level_and_redacted():
                                         "cleanup_errors": ()})()
 
     result = surface(write_enabled=True, executor=FailingExecutor()).kvm_sequence_execute(PLAN, approval_token="fake-token")
-    assert result["error"] == {"code": "secret backend detail", "retryable": False, "requires_human": False}
+    assert result["error"] == {"code": "operation failed", "retryable": False, "requires_human": False}
     assert "error" not in result["evidence"]
 
 

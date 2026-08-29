@@ -3,6 +3,7 @@ import threading
 from kvmctl.journal import Journal
 from kvmctl.session_store import FileAuthorizationStore
 from kvmctl.sequence_executor import SequenceExecutor
+from kvmctl.results import normalize_error, operation_result
 from test_sequence_executor import FakeClient, ready_session
 
 
@@ -50,3 +51,22 @@ def test_rejection_paths_journal_exact_binding(tmp_path):
     assert rows[-1]['transition']=='aborted'
     assert rows[-1]['target']=='pve2' and rows[-1]['plan_hash']==a.plan_hash
     assert 'timestamp' in rows[-1] and 'duration_ms' in rows[-1] and 'target_verification' in rows[-1]
+
+
+def test_error_normalization_redacts_exception_and_nested_sensitive_values(tmp_path):
+    secret = "backend-password=do-not-leak"
+    assert secret not in normalize_error(ValueError(secret))
+    result = operation_result(
+        operation="sequence", transport="kvm", read_only=False, ok=False,
+        error={"code": secret, "message": secret,
+               "nested": {"password": secret, "safe": "visible"}},
+    )
+    serialized = json.dumps(result)
+    assert secret not in serialized
+    assert result["error"] == {"code": "operation failed", "retryable": False,
+                                "requires_human": False}
+
+    journal = Journal(tmp_path / "redacted.jsonl")
+    e = SequenceExecutor(FakeClient(), ready_session(), journal)
+    e.reject(secret, target="pve2")
+    assert secret not in (tmp_path / "redacted.jsonl").read_text()

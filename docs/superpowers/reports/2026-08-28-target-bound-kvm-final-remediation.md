@@ -60,3 +60,21 @@ exit 0
 ```
 
 Follow-up changes harden session, key, lock, temporary, and authorization files with fail-closed owner/mode checks; preserve multiple persisted capabilities with atomic flock-protected append/consume; journal semantic policy, workflow-resolution, and adapter rejection paths; use non-empty deterministic rejection evidence identifiers; and fail immediately when screen capture/OCR deadlines expire.
+
+## Final review closure verification (2026-08-28)
+
+```text
+Focused final-remediation tests:
+52 passed in 0.17s
+
+Full suite:
+271 passed, 3 skipped in 23.38s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```
+
+Final closure changes reject non-finite and overlong authorization TTLs; journal replay and in-memory identity rejection with bound target, timestamps, duration, final-result, and verification evidence; and centralize safe error normalization for sequence CLI/MCP envelopes and journal reasons.
