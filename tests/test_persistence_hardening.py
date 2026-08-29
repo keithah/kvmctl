@@ -1,4 +1,4 @@
-import hashlib, hmac, json, os, stat
+import hashlib, hmac, json, os, stat, time
 import pytest
 from kvmctl.session_store import FileAuthorizationStore
 from kvmctl.sequence_executor import SequenceAuthorization
@@ -7,7 +7,7 @@ from kvmctl.sequences import SequencePlan, plan_hash
 
 def auth(token):
     p = SequencePlan.from_mapping({'target':'pve2','actions':[{'type':'release_all'}]})
-    return SequenceAuthorization(p, 'pve2', plan_hash(p), 999, token=token, binding='b')
+    return SequenceAuthorization(p, 'pve2', plan_hash(p), time.monotonic() + 10, token=token, binding='b')
 
 
 def test_store_preserves_multiple_capabilities_and_consumes_once(tmp_path):
@@ -80,6 +80,30 @@ def test_mac_valid_nonfinite_expiry_is_not_consumed_or_rewritten(tmp_path, expir
     store = FileAuthorizationStore(str(path))
     store.put(auth("keep"))
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=expiry))
+    original = path.read_bytes()
+    assert store.take("keep", binding="b") is None
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("field,value", [
+    ("used", 0), ("used", None), ("used", "false"),
+    ("workflow_revision", 7), ("binding", 7), ("session_id", "7"),
+])
+def test_mac_valid_schema_corruption_is_not_consumed_or_rewritten(tmp_path, field, value):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path))
+    store.put(auth("keep"))
+    _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update({field: value}))
+    original = path.read_bytes()
+    assert store.take("keep", binding="b") is None
+    assert path.read_bytes() == original
+
+
+def test_mac_valid_distant_expiry_is_not_consumed_or_rewritten(tmp_path):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path), clock=lambda: 100.0, max_ttl_s=30.0)
+    store.put(auth("keep"))
+    _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=131.0))
     original = path.read_bytes()
     assert store.take("keep", binding="b") is None
     assert path.read_bytes() == original

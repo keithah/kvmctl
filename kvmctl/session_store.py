@@ -109,9 +109,11 @@ def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
 
 class FileAuthorizationStore:
     """Tamper-evident, cross-process atomic multi-capability store."""
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, clock=time.monotonic, max_ttl_s=30.0):
         self.path, self.keypath = _paths(path)
         self.lockpath = self.path.with_name(self.path.name + ".lock")
+        self.clock = clock
+        self.max_ttl_s = max_ttl_s
 
     @contextmanager
     def _locked(self):
@@ -169,7 +171,8 @@ class FileAuthorizationStore:
             _secure_file(self.keypath)
             payload = {"token": auth.token, "target": auth.target, "plan": auth.plan.to_mapping(),
                        "plan_hash": auth.plan_hash, "expires_at": auth.expires_at,
-                       "workflow_revision": auth.workflow_revision, "binding": auth.binding, "used": False}
+                       "workflow_revision": auth.workflow_revision, "binding": auth.binding,
+                       "session_id": auth.session_id, "used": False}
             records = [p for p in self._records() if p.get("token") != auth.token]
             records.append(payload)
             self._write_records(records)
@@ -178,31 +181,60 @@ class FileAuthorizationStore:
         with self._locked():
             try:
                 records = self._records()
-                p = next((item for item in records if item["token"] == token), None)
-                if p is None or p["used"]: return None
-                if binding is not None and not hmac.compare_digest(str(p.get("binding", "")), str(binding)): return None
-                from .sequences import plan_hash, validate_plan
-                from .sequence_executor import SequenceAuthorization
-                plan = validate_plan(p["plan"])
-                if p["target"] != plan.target:
+                # Validate every record before selecting or rewriting one.  A
+                # MAC authenticates bytes, not their meaning.
+                capabilities = [self._validate_record(item) for item in records]
+                index = next((i for i, item in enumerate(capabilities) if item.token == token), None)
+                if index is None:
                     return None
-                capability_hash = p["plan_hash"]
-                if (not isinstance(capability_hash, str)
-                        or not hmac.compare_digest(plan_hash(plan), capability_hash)):
+                auth = capabilities[index]
+                if records[index]["used"] is True:
                     return None
-                expires_at = p["expires_at"]
-                if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
-                    return None
-                expires_at = float(expires_at)
-                if not math.isfinite(expires_at):
-                    return None
-                auth = SequenceAuthorization(plan, p["target"], capability_hash, expires_at,
-                    p.get("workflow_revision"), token=token, binding=p.get("binding", ""))
+                if binding is not None and not hmac.compare_digest(auth.binding, binding): return None
                 if consume:
-                    p["used"] = True; self._write_records(records)
+                    records[index]["used"] = True
+                    self._write_records(records)
                 return auth
             except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                 return None
+
+    def _validate_record(self, p):
+        from .sequences import plan_hash, validate_plan
+        from .sequence_executor import SequenceAuthorization
+        required = {"token", "target", "plan", "plan_hash", "expires_at",
+                    "workflow_revision", "binding", "session_id", "used"}
+        if not isinstance(p, dict) or set(p) != required:
+            raise ValueError("invalid authorization schema")
+        if not isinstance(p["token"], str) or not p["token"]:
+            raise ValueError("invalid authorization token")
+        if not isinstance(p["target"], str) or not p["target"]:
+            raise ValueError("invalid authorization target")
+        if not isinstance(p["plan"], dict):
+            raise ValueError("invalid authorization plan")
+        plan = validate_plan(p["plan"])
+        if p["plan"] != plan.to_mapping() or p["target"] != plan.target:
+            raise ValueError("invalid authorization plan binding")
+        if not isinstance(p["plan_hash"], str) or not hmac.compare_digest(plan_hash(plan), p["plan_hash"]):
+            raise ValueError("invalid authorization plan hash")
+        if not isinstance(p["workflow_revision"], (str, type(None))) or (isinstance(p["workflow_revision"], str) and not p["workflow_revision"]):
+            raise ValueError("invalid workflow revision")
+        if not isinstance(p["binding"], str) or not p["binding"]:
+            raise ValueError("invalid authorization binding")
+        if isinstance(p["session_id"], bool) or not isinstance(p["session_id"], int) or p["session_id"] < 0:
+            raise ValueError("invalid authorization session")
+        if not isinstance(p["used"], bool):
+            raise ValueError("invalid authorization use state")
+        expires_at = p["expires_at"]
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+            raise ValueError("invalid authorization expiry")
+        expires_at = float(expires_at)
+        now = self.clock()
+        if not math.isfinite(expires_at) or not math.isfinite(now) or not math.isfinite(self.max_ttl_s):
+            raise ValueError("invalid authorization expiry")
+        if expires_at <= now or expires_at > now + self.max_ttl_s:
+            raise ValueError("authorization expiry outside allowed window")
+        return SequenceAuthorization(plan, p["target"], p["plan_hash"], expires_at,
+            p["workflow_revision"], token=p["token"], session_id=p["session_id"], binding=p["binding"])
 
     def peek(self, token, *, binding=None): return self._read(token, consume=False, binding=binding)
     def take(self, token, *, binding=None): return self._read(token, consume=True, binding=binding)

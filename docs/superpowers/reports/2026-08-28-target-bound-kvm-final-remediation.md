@@ -43,6 +43,10 @@ exit 0
 
 Final gap coverage includes endpoint/session-derived authorization binding, flock-protected atomic single-use consumption, bounded screen assertion capture/OCR with fail-closed behavior and exact authorized journal binding, and centralized aborted checkpoints for pre-execution rejection paths.
 
+## Persisted capability schema and TTL hardening (2026-08-29)
+
+`FileAuthorizationStore` now rejects MAC-valid capabilities with non-boolean use state, invalid token/binding/session/workflow types, non-canonical plans, mismatched hashes, expired or overlong finite expiries, and any unexpected persisted fields before consumption. All records are validated before a rewrite; malformed records remain byte-for-byte unchanged. Added regression coverage for falsey use values, binding/workflow/session type corruption, distant expiry, and preservation.
+
 ## Final follow-up verification (2026-08-28)
 
 ```text
