@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _datetime
+import errno
+import fcntl
 import json
 import math
 import os
@@ -72,26 +74,63 @@ class Journal:
             raise ValueError("journal record exceeds bound")
         with _lock_for(self.path):
             parent_fd = _open_secure_dir(self.path.parent, create=True)
+            lock_fd = None
             try:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
                 try:
-                    fd = os.open(self.path.name, flags, 0o600, dir_fd=parent_fd)
-                except OSError:
+                    lock_fd = os.open(self.path.name + ".lock", lock_flags, 0o600,
+                                      dir_fd=parent_fd)
+                except OSError as exc:
+                    if getattr(exc, "errno", None) == errno.ELOOP:
+                        raise PermissionError(f"unsafe journal lock file: {self.path}.lock") from exc
                     raise
+                lock_acquired = False
                 try:
-                    info = os.fstat(fd)
+                    info = os.fstat(lock_fd)
                     if (not stat.S_ISREG(info.st_mode)
                             or info.st_uid != os.getuid()
                             or stat.S_IMODE(info.st_mode) != 0o600):
-                        raise PermissionError(f"unsafe journal file: {self.path}")
-                    written = os.write(fd, payload)
-                    if written != len(payload):
-                        raise OSError("short atomic journal append")
-                    os.fsync(fd)
+                        raise PermissionError(f"unsafe journal lock file: {self.path}.lock")
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                    lock_acquired = True
+                    fd = None
+                    try:
+                        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                        fd = os.open(self.path.name, flags, 0o600, dir_fd=parent_fd)
+                        info = os.fstat(fd)
+                        if (not stat.S_ISREG(info.st_mode)
+                                or info.st_uid != os.getuid()
+                                or stat.S_IMODE(info.st_mode) != 0o600):
+                            raise PermissionError(f"unsafe journal file: {self.path}")
+                        offset = os.lseek(fd, 0, os.SEEK_END)
+                        try:
+                            written = 0
+                            while written < len(payload):
+                                count = os.write(fd, payload[written:])
+                                if count <= 0:
+                                    raise OSError("short atomic journal append")
+                                written += count
+                            os.fsync(fd)
+                        except BaseException as original:
+                            try:
+                                os.ftruncate(fd, offset)
+                            except BaseException as rollback_error:
+                                original.add_note(f"journal rollback failed: {rollback_error!r}")
+                            raise
+                    finally:
+                        if fd is not None:
+                            os.close(fd)
                 finally:
-                    os.close(fd)
+                    if lock_acquired:
+                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
-                os.close(parent_fd)
+                if lock_fd is not None:
+                    try:
+                        os.close(lock_fd)
+                    finally:
+                        os.close(parent_fd)
+                else:
+                    os.close(parent_fd)
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:

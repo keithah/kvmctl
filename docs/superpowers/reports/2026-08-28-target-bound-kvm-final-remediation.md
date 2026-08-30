@@ -231,3 +231,17 @@ exit 0
 git diff --check:
 exit 0
 ```
+
+## Failure-atomic journal append remediation (2026-08-30)
+
+Journal appends now use a descriptor-opened, no-follow sibling lock file with exact owner/type/0600 validation and `flock` across processes. Writes run in a bounded loop under that lock; any write or fsync failure truncates back to the pre-append offset while preserving the original exception, and all descriptors/locks are released on ordinary and `BaseException` paths. Added deterministic short-write rollback and lock-file security regressions.
+
+Verification:
+
+```text
+Focused journal tests:
+5 passed in 0.06s
+
+Full suite:
+369 passed, 3 skipped in 24.11s
+```
