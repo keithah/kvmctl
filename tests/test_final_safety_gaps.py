@@ -103,6 +103,45 @@ def test_journal_requires_private_regular_file_and_rejects_symlinked_parent(tmp_
         Journal(linked / "journal.jsonl").append({"ok": False})
 
 
+def test_journal_preserves_append_error_and_attempts_all_cleanup(monkeypatch, tmp_path):
+    import fcntl
+    import kvmctl.journal as journal_module
+
+    close_calls = []
+    unlock_calls = []
+    close_count_at_write = None
+    fail_closes = False
+    real_flock = fcntl.flock
+
+    def close(fd):
+        close_calls.append(fd)
+        if fail_closes:
+            raise RuntimeError("cleanup close failed")
+
+    def flock(fd, operation):
+        if operation == fcntl.LOCK_UN:
+            unlock_calls.append(fd)
+            raise RuntimeError("cleanup unlock failed")
+        return real_flock(fd, operation)
+
+    def write(fd, data):
+        nonlocal close_count_at_write, fail_closes
+        close_count_at_write = len(close_calls)
+        fail_closes = True
+        raise OSError("append failed")
+
+    monkeypatch.setattr(journal_module.os, "close", close)
+    monkeypatch.setattr(journal_module.fcntl, "flock", flock)
+    monkeypatch.setattr(journal_module.os, "write", write)
+
+    with pytest.raises(OSError, match="append failed"):
+        Journal(tmp_path / "journal.jsonl").append({"ok": True})
+
+    assert close_count_at_write is not None
+    assert len(close_calls) - close_count_at_write == 3
+    assert len(unlock_calls) == 1
+
+
 @pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
 def test_session_persistence_requires_exact_0600_files(tmp_path, mode):
     path = tmp_path / "session.json"

@@ -9,6 +9,7 @@ import json
 import math
 import os
 import stat
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -54,6 +55,17 @@ def _safe(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, bytes):
         return f"<bytes omitted: {len(value)} bytes>"
     return f"<{type(value).__name__}>"
+
+
+def _cleanup(action, label: str) -> None:
+    """Attempt cleanup without masking an exception already in flight."""
+    primary = sys.exc_info()[1]
+    try:
+        action()
+    except BaseException as cleanup_error:
+        if primary is None:
+            raise
+        primary.add_note(f"journal cleanup {label} failed: {cleanup_error!r}")
 
 
 class Journal:
@@ -123,18 +135,16 @@ class Journal:
                             raise
                     finally:
                         if fd is not None:
-                            os.close(fd)
+                            _cleanup(lambda: os.close(fd), "journal fd close")
                 finally:
                     if lock_acquired:
-                        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                        _cleanup(lambda: fcntl.flock(lock_fd, fcntl.LOCK_UN), "lock unlock")
             finally:
                 if lock_fd is not None:
-                    try:
-                        os.close(lock_fd)
-                    finally:
-                        os.close(parent_fd)
+                    _cleanup(lambda: os.close(lock_fd), "lock fd close")
+                    _cleanup(lambda: os.close(parent_fd), "parent fd close")
                 else:
-                    os.close(parent_fd)
+                    _cleanup(lambda: os.close(parent_fd), "parent fd close")
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:

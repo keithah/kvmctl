@@ -171,7 +171,7 @@ Sequences are declarative, target-bound plans. The safe lifecycle is **plan → 
 ```sh
 kvmctl --url "$KVM_URL" sequence-plan --plan ./plan.json
 kvmctl --url "$KVM_URL" --yes sequence-authorize --plan ./plan.json --ttl 30
-kvmctl --url "$KVM_URL" --yes sequence-execute --plan ./plan.json --ttl 30
+kvmctl --url "$KVM_URL" --yes sequence-execute --plan ./plan.json --ttl 30 --approval-token "$APPROVAL_TOKEN"
 ```
 
 `sequence-plan` is read-only. Authorization and execution require `--yes`, and every invocation must use the already selected and verified target session; a target mismatch, stale plan hash, expired authorization, or unexpected screen aborts before further input. Plans are bounded to at most 10 actions, 30 seconds total, and 5 seconds per held key. Supported actions include text, validated key chords, bounded key holds, release-all, mouse movement/click/scroll, and waits. Results contain a plan hash, target, progress, and cleanup status, never plan secrets.

@@ -237,11 +237,18 @@ exit 0
 Journal appends now use a descriptor-opened, no-follow sibling lock file with exact owner/type/0600 validation and `flock` across processes. Writes run in a bounded loop under that lock; any write or fsync failure truncates back to the pre-append offset while preserving the original exception, and all descriptors/locks are released on ordinary and `BaseException` paths. Added deterministic short-write rollback and lock-file security regressions.
 
 Verification:
-
 ```text
-Focused journal tests:
-5 passed in 0.06s
+Focused journal/CLI tests:
+44 passed in 0.11s
 
 Full suite:
-369 passed, 3 skipped in 24.11s
+372 passed, 3 skipped in 24.31s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
 ```
+
+Cleanup failures during journal append now remain best-effort: journal-fd close, flock unlock, lock-fd close, and parent-fd close are each attempted, while the original write/fsync/append exception remains primary. The sequence execution README example now supplies the required opaque `--approval-token`.
