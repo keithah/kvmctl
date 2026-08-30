@@ -1,9 +1,11 @@
 import threading
+import time
 
 import pytest
 
 from kvmctl.journal import Journal
 from kvmctl.machines import RACK, SessionState
+import kvmctl.sequence_executor as sequence_executor
 from kvmctl.sequence_executor import SequenceExecutor
 
 
@@ -105,7 +107,22 @@ def test_blocked_screen_worker_is_shared_across_repeated_executors(tmp_path):
     assert workers[0] is workers[1] is workers[2]
 
 
-def test_sequence_execution_cleans_up_screen_executor(tmp_path):
+def test_sequence_execution_cleans_up_screen_executor(tmp_path, monkeypatch):
+    created = []
+    real_executor = sequence_executor.ThreadPoolExecutor
+
+    class TrackingExecutor(real_executor):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.shutdown_calls = 0
+            created.append(self)
+
+        def shutdown(self, *args, **kwargs):
+            self.shutdown_calls += 1
+            return super().shutdown(*args, **kwargs)
+
+    monkeypatch.setattr(sequence_executor, "ThreadPoolExecutor", TrackingExecutor)
+
     class Client(ExpiringScreenClient):
         def snapshot_jpeg(self):
             self.snapshots += 1
@@ -113,9 +130,59 @@ def test_sequence_execution_cleans_up_screen_executor(tmp_path):
 
     client = Client([0.0])
     ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "j"),
-                          clock=lambda: 0.0)
+                          clock=lambda: 0.0, device_id="screen-normal")
     planned = ex.plan({"target": "pve2", "actions": [{"type": "assert_screen", "contains": "x"}]})
     auth = ex.authorize(planned, approved=True)
+    device_id = ex.device_id
     result = ex.execute(auth.token)
     assert result.ok
     assert ex._screen_executor is None
+    assert device_id not in sequence_executor._SCREEN_RESOURCES
+    assert created[0].shutdown_calls == 1
+
+
+def test_sequence_execution_removes_screen_worker_after_failure(tmp_path):
+    client = ExpiringScreenClient([0.0])
+    ex = SequenceExecutor(client, ready_session(), Journal(tmp_path / "j"),
+                          clock=lambda: 0.0, device_id="screen-failure")
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "assert_screen", "contains": "missing"}]})
+    auth = ex.authorize(planned, approved=True)
+
+    result = ex.execute(auth.token)
+
+    assert result.ok is False
+    assert "screen-failure" not in sequence_executor._SCREEN_RESOURCES
+
+
+def test_timeout_keeps_active_screen_worker_without_replacement(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingClient(SlowClient):
+        def snapshot_jpeg(self):
+            started.set()
+            release.wait(1)
+            return b"frame"
+
+    device_id = "screen-timeout"
+    ex = SequenceExecutor(BlockingClient(), ready_session(), Journal(tmp_path / "j"),
+                          device_id=device_id)
+    planned = ex.plan({"target": "pve2", "max_duration_ms": 1,
+                       "actions": [{"type": "assert_screen", "contains": "x"}]})
+    auth = ex.authorize(planned, approved=True)
+
+    result = ex.execute(auth.token)
+
+    assert started.is_set()
+    assert result.ok is False
+    worker, future = sequence_executor._SCREEN_RESOURCES[device_id]
+    assert not future.done()
+
+    release.set()
+    future.result(timeout=2)
+    for _ in range(100):
+        if device_id not in sequence_executor._SCREEN_RESOURCES:
+            break
+        time.sleep(0.01)
+    assert device_id not in sequence_executor._SCREEN_RESOURCES
+    assert worker._shutdown is True

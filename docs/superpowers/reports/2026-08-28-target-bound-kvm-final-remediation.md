@@ -187,3 +187,9 @@ Verification: focused persistence/auth tests — `33 passed in 0.08s`; full suit
 Authorization-store reads now wrap lock acquisition and validation as well as record inspection: ordinary `OSError` lookup failures return a safe miss, while typed integrity failures continue to propagate. Persistence reads for authorization and session/key files now open with `O_NOFOLLOW`, validate the opened descriptor with `fstat`, and consume bytes from that descriptor, removing path check-then-use replacement windows while preserving atomic writes. Screen calls use one bounded worker/future resource per device identity; an unfinished timed-out transport call poisons that resource and subsequent executions cannot create replacement workers or queue additional calls.
 
 Verification: focused persistence and screen-worker tests — `31 passed`; full repository tests, compileall, diff check, and complete diff inspection completed for this remediation.
+
+## Screen worker ownership and lifecycle remediation (2026-08-30)
+
+Sequence execution now owns its per-device screen worker lifecycle: completed workers are removed from `_SCREEN_RESOURCES` under the submission lock and shut down during execution cleanup. If a bounded snapshot/OCR call times out while still running, its poisoned worker remains registered to prevent replacement workers and concurrent device calls, then is retired and shut down automatically when the call finishes. Added regressions for normal and failure cleanup, active timeout preservation, and post-timeout retirement.
+
+Verification: focused screen-worker tests — `7 passed`.

@@ -23,6 +23,16 @@ _SCREEN_RESOURCES = {}
 _SCREEN_FUTURE_LOCK = threading.Lock()
 
 
+def _retire_screen_resource(device_id, worker, completed_future) -> None:
+    """Retire a poisoned worker once its previously active call finishes."""
+    with _SCREEN_FUTURE_LOCK:
+        resource = _SCREEN_RESOURCES.get(device_id)
+        if resource != (worker, completed_future):
+            return
+        _SCREEN_RESOURCES.pop(device_id, None)
+    worker.shutdown(wait=False)
+
+
 @dataclass(frozen=True)
 class SequencePlanRecord:
     plan: SequencePlan
@@ -374,7 +384,12 @@ class SequenceExecutor:
                 result.ok = False
                 self._best_effort_checkpoint("cleanup_failed", target=authorization.target,
                                              plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
-            self._screen_executor = None
+            try:
+                self._cleanup_screen_executor()
+            except BaseException:
+                result.cleanup_ok = False
+                result.ok = False
+                result.cleanup_errors = (*result.cleanup_errors, "screen worker shutdown failed")
             self._screen_poisoned = False
             result.elapsed_ms = max(0, int((self.clock() - start) * 1000))
             try:
@@ -384,6 +399,34 @@ class SequenceExecutor:
                 result.ok = False
                 result.cleanup_errors = (*result.cleanup_errors, "lock release failed")
         return result
+
+    def _cleanup_screen_executor(self) -> None:
+        """Release this execution's screen worker when no call is active.
+
+        A timed-out transport call cannot be cancelled safely. Keep its
+        poisoned worker registered until it finishes, otherwise a later
+        execution could create replacement workers and call the device
+        concurrently. Completed workers are removed under the same lock
+        used by submission, then shut down outside the lock.
+        """
+        executor = self._screen_executor
+        self._screen_executor = None
+        if executor is None:
+            return
+        with _SCREEN_FUTURE_LOCK:
+            resource = _SCREEN_RESOURCES.get(self.device_id)
+            if resource is None or resource[0] is not executor:
+                return
+            future = resource[1]
+            if future is not None and not future.done():
+                return
+            _SCREEN_RESOURCES.pop(self.device_id, None)
+        executor.shutdown(wait=True)
+
+    def _watch_screen_future(self, worker, future) -> None:
+        future.add_done_callback(
+            lambda completed: _retire_screen_resource(self.device_id, worker, completed)
+        )
 
     def _dispatch(self, action) -> None:
         try:
@@ -485,12 +528,15 @@ class SequenceExecutor:
                     raise RuntimeError("screen assertion unavailable")
                 future = worker.submit(operation, *args)
                 _SCREEN_RESOURCES[self.device_id] = (worker, future)
-                return future
+            return future
 
         try:
+            frame_future = None
             try:
-                frame = submit(snapshot).result(timeout=remaining)
+                frame_future = submit(snapshot)
+                frame = frame_future.result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
+                self._watch_screen_future(executor, frame_future)
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc
             if not isinstance(frame, (bytes, bytearray)) or len(frame) > self.SCREEN_MAX_BYTES:
@@ -502,9 +548,12 @@ class SequenceExecutor:
             self._check_action_window()
             if remaining <= 0:
                 raise TimeoutError("sequence deadline expired")
+            ocr_future = None
             try:
-                text = submit(ocr, bytes(frame)).result(timeout=remaining)
+                ocr_future = submit(ocr, bytes(frame))
+                text = ocr_future.result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
+                self._watch_screen_future(executor, ocr_future)
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc
             self._screen_poisoned = False
