@@ -1,6 +1,6 @@
 import hashlib, hmac, json, os, stat, time
 import pytest
-from kvmctl.session_store import FileAuthorizationStore
+from kvmctl.session_store import FileAuthorizationStore, AuthorizationStoreIntegrityError
 from kvmctl.sequence_executor import SequenceAuthorization
 from kvmctl.sequences import SequencePlan, plan_hash
 
@@ -69,7 +69,8 @@ def test_mac_valid_malformed_capability_is_not_consumed_or_rewritten(tmp_path):
     original = path.read_bytes()
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(plan_hash=123))
     malformed = path.read_bytes()
-    assert store.take("keep", binding="b") is None
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.take("keep", binding="b")
     assert path.read_bytes() == malformed
     assert path.read_bytes() != original
 
@@ -81,7 +82,8 @@ def test_mac_valid_nonfinite_expiry_is_not_consumed_or_rewritten(tmp_path, expir
     store.put(auth("keep"))
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=expiry))
     original = path.read_bytes()
-    assert store.take("keep", binding="b") is None
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.take("keep", binding="b")
     assert path.read_bytes() == original
 
 
@@ -95,7 +97,8 @@ def test_mac_valid_schema_corruption_is_not_consumed_or_rewritten(tmp_path, fiel
     store.put(auth("keep"))
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update({field: value}))
     original = path.read_bytes()
-    assert store.take("keep", binding="b") is None
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.take("keep", binding="b")
     assert path.read_bytes() == original
 
 
@@ -107,7 +110,8 @@ def test_mac_valid_distant_expiry_is_not_consumed_or_rewritten(tmp_path):
     store.put(initial)
     _rewrite_payload(path, path.with_name("auth.key"), lambda p: p.update(expires_at=131.0))
     original = path.read_bytes()
-    assert store.take("keep", binding="b") is None
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.take("keep", binding="b")
     assert path.read_bytes() == original
 
 
@@ -121,6 +125,24 @@ def test_tampered_store_fails_closed_and_does_not_overwrite(tmp_path):
     with __import__("pytest").raises(AuthorizationStoreIntegrityError):
         s.put(auth("new"))
     assert b"new" not in path.read_bytes()
+
+
+def test_tampered_store_read_propagates_integrity_error_and_missing_is_none(tmp_path):
+    path = tmp_path / "auth"
+    store = FileAuthorizationStore(str(path))
+    store.put(auth("keep"))
+    path.write_bytes(path.read_bytes().replace(b"keep", b"evil"))
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.peek("missing", binding="b")
+
+    missing_store = FileAuthorizationStore(str(tmp_path / "missing"))
+    assert missing_store.peek("missing", binding="b") is None
+
+
+def test_non_integrity_oserror_still_fails_closed(tmp_path, monkeypatch):
+    store = FileAuthorizationStore(str(tmp_path / "auth"))
+    monkeypatch.setattr(store, "_records", lambda: (_ for _ in ()).throw(OSError("unreadable")))
+    assert store.peek("missing", binding="b") is None
 
 
 def test_put_rejects_malformed_capability_without_modifying_store(tmp_path):

@@ -175,3 +175,9 @@ Verification: focused semantic/executor/MCP tests — `74 passed in 0.32s`; full
 Semantic sequence and workflow execution boundaries now validate exact boolean approval and finite, integral, positive bounded TTL values even when a caller supplies an approval token. Screen capture and OCR submission both re-check authorization expiry and use the minimum authorization/deadline remaining window. Short-lived sequence executions explicitly shut down their screen worker in final cleanup while preserving poisoned-worker behavior for direct bounded-call use. Added regressions for scalar bypass, expiry between capture and OCR, pre-expiry snapshot rejection, and worker cleanup.
 
 Verification: focused semantic/screen tests — `22 passed in 0.11s`; full suite — `350 passed, 3 skipped in 24.01s`; compileall and `git diff --check` — exit 0.
+
+## Authorization-store integrity propagation remediation (2026-08-30)
+
+`FileAuthorizationStore._read()` now propagates typed `AuthorizationStoreIntegrityError` for MAC, schema, and semantic capability corruption instead of swallowing it under the broad `OSError` handler. Ordinary unreadable lookup errors remain fail-closed as `None`, while missing state and valid put/take single-use behavior are unchanged. Added regressions distinguishing corrupt state from missing state and covering non-integrity `OSError` handling.
+
+Verification: focused persistence/auth tests — `33 passed in 0.08s`; full suite — `352 passed, 3 skipped in 23.88s`; compileall and `git diff --check` — exit 0.

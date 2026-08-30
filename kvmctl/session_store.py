@@ -150,7 +150,7 @@ class FileAuthorizationStore:
                 records = [env["payload"]]
                 raw = json.dumps(env["payload"], sort_keys=True, separators=(",", ":")).encode()
             valid = hmac.compare_digest(env["mac"], hmac.new(self.keypath.read_bytes(), raw, hashlib.sha256).hexdigest())
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
         if not valid:
             raise AuthorizationStoreIntegrityError("authorization store integrity failure")
@@ -201,7 +201,11 @@ class FileAuthorizationStore:
                     records[index]["used"] = True
                     self._write_records(records)
                 return auth
-            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            except AuthorizationStoreIntegrityError:
+                raise
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+                raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
+            except OSError:
                 return None
 
     def _validate_record(self, p):
