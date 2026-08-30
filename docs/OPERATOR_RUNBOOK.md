@@ -134,8 +134,9 @@ Use the same three-stage safety boundary for every declarative sequence: plan it
 ```sh
 kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
   --insecure sequence-plan --plan ./plan.json
-kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
-  --insecure --yes sequence-authorize --plan ./plan.json --ttl 30
+AUTHORIZATION_JSON=$(kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes sequence-authorize --plan ./plan.json --ttl 30)
+APPROVAL_TOKEN=$(printf '%s' "$AUTHORIZATION_JSON" | jq -r '.evidence.approval_token')
 kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
   --insecure --yes sequence-execute --plan ./plan.json --ttl 30 \
   --approval-token "$APPROVAL_TOKEN"

@@ -215,3 +215,55 @@ def test_journal_attempts_parent_close_after_lock_close_failure(tmp_path, monkey
     assert lock_fd in close_calls
     assert parent_fd in close_calls
     assert close_calls.index(lock_fd) < close_calls.index(parent_fd)
+
+
+def test_journal_reports_first_cleanup_error_after_preserving_original(tmp_path, monkeypatch):
+    path = tmp_path / "checkpoints.jsonl"
+    journal = Journal(path)
+    journal.append({"existing": True})
+    real_close = os.close
+    real_open = os.open
+    real_fsync = os.fsync
+    real_flock = journal_module.fcntl.flock
+    attempted = []
+    close_calls = 0
+    fsync_calls = 0
+
+    def fail_append_fsync(fd):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise OSError("injected append fsync failure")
+        return real_fsync(fd)
+
+    def fail_cleanup_close(fd):
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            return real_close(fd)
+        attempted.append(("close", fd))
+        raise OSError(f"injected close failure for {fd}")
+
+    def fail_unlock(fd, operation):
+        if operation == journal_module.fcntl.LOCK_UN:
+            attempted.append(("unlock", fd))
+            raise OSError("injected unlock failure")
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(journal_module, "_open_secure_dir",
+                        lambda directory, *, create: real_open(directory, os.O_RDONLY | os.O_DIRECTORY))
+    monkeypatch.setattr(os, "fsync", fail_append_fsync)
+    monkeypatch.setattr(os, "close", fail_cleanup_close)
+    monkeypatch.setattr(journal_module.fcntl, "flock", fail_unlock)
+
+    try:
+        journal.append({"new": True})
+    except OSError as exc:
+        assert "injected append fsync failure" in str(exc)
+        assert len(exc.__notes__) == 1
+        assert "journal cleanup lock unlock failed" in exc.__notes__[0]
+    else:
+        raise AssertionError("append failure was swallowed")
+
+    assert len([kind for kind, _ in attempted if kind == "close"]) == 2
+    assert [kind for kind, _ in attempted].count("unlock") == 1
