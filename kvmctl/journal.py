@@ -6,10 +6,12 @@ import datetime as _datetime
 import json
 import math
 import os
+import stat
 import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from kvmctl.session_store import _open_secure_dir
 
 _SECRET_KEY = __import__("re").compile(
     r"(?i)(?:pass(?:word|wd)?|token|secret|private[_ -]?key|credential|api[_ -]?key|authorization|cookie)"
@@ -68,16 +70,28 @@ class Journal:
                              separators=(",", ":"), allow_nan=False).encode("utf-8") + b"\n"
         if len(payload) > self.max_record_bytes:
             raise ValueError("journal record exceeds bound")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with _lock_for(self.path):
-            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            parent_fd = _open_secure_dir(self.path.parent, create=True)
             try:
-                written = os.write(fd, payload)
-                if written != len(payload):
-                    raise OSError("short atomic journal append")
-                os.fsync(fd)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    fd = os.open(self.path.name, flags, 0o600, dir_fd=parent_fd)
+                except OSError:
+                    raise
+                try:
+                    info = os.fstat(fd)
+                    if (not stat.S_ISREG(info.st_mode)
+                            or info.st_uid != os.getuid()
+                            or stat.S_IMODE(info.st_mode) != 0o600):
+                        raise PermissionError(f"unsafe journal file: {self.path}")
+                    written = os.write(fd, payload)
+                    if written != len(payload):
+                        raise OSError("short atomic journal append")
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
             finally:
-                os.close(fd)
+                os.close(parent_fd)
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:

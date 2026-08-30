@@ -141,7 +141,7 @@ def test_tampered_store_read_propagates_integrity_error_and_missing_is_none(tmp_
 
 def test_non_integrity_oserror_still_fails_closed(tmp_path, monkeypatch):
     store = FileAuthorizationStore(str(tmp_path / "auth"))
-    monkeypatch.setattr(store, "_records", lambda: (_ for _ in ()).throw(OSError("unreadable")))
+    monkeypatch.setattr(store, "_records", lambda _parent_fd: (_ for _ in ()).throw(OSError("unreadable")))
     assert store.peek("missing", binding="b") is None
 
 
@@ -153,7 +153,7 @@ def test_lock_acquisition_oserror_fails_closed(tmp_path, monkeypatch):
 
 def test_lock_validation_oserror_fails_closed(tmp_path, monkeypatch):
     store = FileAuthorizationStore(str(tmp_path / "auth"))
-    monkeypatch.setattr("kvmctl.session_store._secure_file", lambda *a, **k: (_ for _ in ()).throw(OSError("validation unavailable")))
+    monkeypatch.setattr(store, "_records", lambda _parent_fd: (_ for _ in ()).throw(OSError("validation unavailable")))
     assert store.peek("missing", binding="b") is None
 
 

@@ -211,3 +211,23 @@ exit 0
 git diff --check:
 exit 0
 ```
+
+## Journal and descriptor-boundary closure (2026-08-30)
+
+Journal appends now walk and hold validated parent directory descriptors, create/open the final file with `O_NOFOLLOW`, and enforce owner, regular-file type, and exact `0600` mode before writing. Session reads, key creation, authorization locking, and authorization reads/writes use the held parent descriptor throughout each operation; atomic replacement reuses that descriptor. Added journal mode and symlink-parent regression coverage. Removed the remaining path-based persistence validation/read/secret helpers and the adapter fallback that could bypass descriptor-bound reads. macOS `/var` and `/tmp` system aliases are mapped to their stable `/private` targets before no-follow traversal.
+
+## Journal and descriptor-boundary closure verification (2026-08-30)
+
+```text
+Focused journal/persistence/MCP tests:
+71 passed in 0.44s
+
+Full suite:
+367 passed, 3 skipped in 23.89s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```

@@ -20,9 +20,17 @@ def _secure_dir(path: pathlib.Path, *, create=False) -> None:
     os.close(fd)
 
 
-def _open_secure_dir(path: pathlib.Path, *, create=False) -> int:
+def _open_secure_dir(path: pathlib.Path, *, create=False, check_final=True) -> int:
     """Open every parent component without following symlinks."""
     path = pathlib.Path(path).expanduser()
+    # macOS exposes /var and /tmp as stable system aliases.  Canonicalize only
+    # those aliases; all application-controlled components are still opened
+    # descriptor-relative with O_NOFOLLOW below.
+    if path.is_absolute() and path.parts[1:2] in (("var",), ("tmp",)):
+        alias = path.parts[1]
+        target = pathlib.Path("/private") / alias
+        if os.path.islink("/" + alias) and os.readlink("/" + alias) == "private/" + alias:
+            path = target.joinpath(*path.parts[2:])
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     absolute = path.is_absolute()
     fd = os.open(os.sep if absolute else ".", flags)
@@ -47,7 +55,7 @@ def _open_secure_dir(path: pathlib.Path, *, create=False) -> int:
             if not stat.S_ISDIR(info.st_mode):
                 raise PermissionError(f"unsafe persistent directory: {path}")
         info = os.fstat(fd)
-        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        if check_final and (info.st_uid != os.getuid() or info.st_mode & 0o022):
             raise PermissionError(f"unsafe persistent directory: {path}")
         return fd
     except BaseException:
@@ -90,6 +98,29 @@ def _read_regular(path: pathlib.Path, *, allow_missing=False) -> bytes | None:
         os.close(fd)
 
 
+def _read_regular_fd(parent_fd: int, name: str, *, allow_missing=False) -> bytes | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PermissionError(f"unsafe persistent file: {name}")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+
 def _create_secret(path: pathlib.Path) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o600)
@@ -101,9 +132,25 @@ def _create_secret(path: pathlib.Path) -> None:
         os.close(fd)
 
 
-def _atomic_write(path: pathlib.Path, data: str) -> None:
+def _create_secret_fd(parent_fd: int, name: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(name, flags, 0o600, dir_fd=parent_fd)
+    try:
+        os.fchmod(fd, 0o600)
+        data = os.urandom(32)
+        if os.write(fd, data) != len(data):
+            raise OSError("short secret write")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_write(path: pathlib.Path, data: str, *, parent_fd: int | None = None) -> None:
     path = pathlib.Path(path)
-    parent_fd = _open_secure_dir(path.parent)
+    owned_parent = parent_fd is None
+    if owned_parent:
+        parent_fd = _open_secure_dir(path.parent)
+    assert parent_fd is not None
     tmp_name = None
     try:
         try:
@@ -142,7 +189,8 @@ def _atomic_write(path: pathlib.Path, data: str) -> None:
                 os.unlink(tmp_name, dir_fd=parent_fd)
             except FileNotFoundError:
                 pass
-        os.close(parent_fd)
+        if owned_parent:
+            os.close(parent_fd)
 
 
 def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
@@ -152,18 +200,21 @@ def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
     payload = {"endpoint": endpoint, "machine": rec.machine, "port": rec.port,
                "state": rec.state.value, "detail": rec.detail[:300], "at": rec.at}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    p, keypath = _paths(path); _secure_dir(p.parent, create=True)
-    if _read_regular(keypath, allow_missing=True) is None:
-        try:
-            _create_secret(keypath)
-        except FileExistsError:
-            pass
-    key = _read_regular(keypath)
-    if key is None:
-        raise FileNotFoundError(keypath)
-    _secure_file(p, allow_missing=True)
-    envelope = {"payload": payload, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
-    _atomic_write(p, json.dumps(envelope, sort_keys=True))
+    p, keypath = _paths(path)
+    parent_fd = _open_secure_dir(p.parent, create=True)
+    try:
+        if _read_regular_fd(parent_fd, keypath.name, allow_missing=True) is None:
+            try:
+                _create_secret_fd(parent_fd, keypath.name)
+            except FileExistsError:
+                pass
+        key = _read_regular_fd(parent_fd, keypath.name)
+        if key is None:
+            raise FileNotFoundError(keypath)
+        envelope = {"payload": payload, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
+        _atomic_write(p, json.dumps(envelope, sort_keys=True), parent_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
 
 
 class FileAuthorizationStore:
@@ -176,12 +227,12 @@ class FileAuthorizationStore:
 
     @contextmanager
     def _locked(self):
-        _secure_dir(self.path.parent, create=True)
-        _secure_file(self.path, allow_missing=True); _secure_file(self.keypath, allow_missing=True)
+        parent_fd = _open_secure_dir(self.path.parent, create=True)
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         try:
-            fd = os.open(self.lockpath, flags, 0o600)
+            fd = os.open(self.lockpath.name, flags, 0o600, dir_fd=parent_fd)
         except OSError as exc:
+            os.close(parent_fd)
             if getattr(exc, "errno", None) == errno.ELOOP:
                 raise PermissionError(f"unsafe lock file: {self.lockpath}") from exc
             raise
@@ -192,15 +243,16 @@ class FileAuthorizationStore:
                     or stat.S_IMODE(info.st_mode) != 0o600):
                 raise PermissionError(f"unsafe lock file: {self.lockpath}")
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try: yield
+            try: yield parent_fd
             finally: fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         finally:
             lock.close()
+            os.close(parent_fd)
 
-    def _records(self):
-        raw_file = _read_regular(self.path, allow_missing=True)
+    def _records(self, parent_fd):
+        raw_file = _read_regular_fd(parent_fd, self.path.name, allow_missing=True)
         if raw_file is None: return []
-        key = _read_regular(self.keypath)
+        key = _read_regular_fd(parent_fd, self.keypath.name)
         try:
             env = json.loads(raw_file.decode("utf-8"))
             if "payloads" in env:
@@ -216,11 +268,11 @@ class FileAuthorizationStore:
             raise AuthorizationStoreIntegrityError("authorization store integrity failure")
         return records
 
-    def _write_records(self, records):
+    def _write_records(self, records, parent_fd):
         raw = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
-        key = _read_regular(self.keypath)
+        key = _read_regular_fd(parent_fd, self.keypath.name)
         env = {"payloads": records, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
-        _atomic_write(self.path, json.dumps(env, sort_keys=True))
+        _atomic_write(self.path, json.dumps(env, sort_keys=True), parent_fd=parent_fd)
 
     def put(self, auth):
         try:
@@ -233,21 +285,20 @@ class FileAuthorizationStore:
             self._validate_record(payload)
         except (AttributeError, TypeError, ValueError, KeyError) as exc:
             raise ValueError("invalid authorization") from exc
-        with self._locked():
-            if _read_regular(self.keypath, allow_missing=True) is None:
+        with self._locked() as parent_fd:
+            if _read_regular_fd(parent_fd, self.keypath.name, allow_missing=True) is None:
                 try:
-                    _create_secret(self.keypath)
+                    _create_secret_fd(parent_fd, self.keypath.name)
                 except FileExistsError:
                     pass
-            _secure_file(self.keypath)
-            records = [p for p in self._records() if p.get("token") != auth.token]
+            records = [p for p in self._records(parent_fd) if p.get("token") != auth.token]
             records.append(payload)
-            self._write_records(records)
+            self._write_records(records, parent_fd)
 
     def _read(self, token, *, consume, binding=None):
         try:
-            with self._locked():
-                records = self._records()
+            with self._locked() as parent_fd:
+                records = self._records(parent_fd)
                 # Validate every record before selecting or rewriting one.  A
                 # MAC authenticates bytes, not their meaning.
                 capabilities = [self._validate_record(item) for item in records]
@@ -260,7 +311,7 @@ class FileAuthorizationStore:
                 if binding is not None and not hmac.compare_digest(auth.binding, binding): return None
                 if consume:
                     records[index]["used"] = True
-                    self._write_records(records)
+                    self._write_records(records, parent_fd)
                 return auth
         except AuthorizationStoreIntegrityError:
             raise
@@ -313,9 +364,10 @@ class FileAuthorizationStore:
 
 def load_session(path: str, *, endpoint: str, max_age_s: float = 3600.0):
     session = SessionState(); p, keypath = _paths(path)
+    parent_fd = None
     try:
-        _secure_dir(p.parent)
-        raw_file = _read_regular(p); key = _read_regular(keypath)
+        parent_fd = _open_secure_dir(p.parent)
+        raw_file = _read_regular_fd(parent_fd, p.name); key = _read_regular_fd(parent_fd, keypath.name)
         if raw_file is None or key is None:
             raise FileNotFoundError(p)
         env = json.loads(raw_file.decode("utf-8")); payload = env["payload"]
@@ -329,4 +381,7 @@ def load_session(path: str, *, endpoint: str, max_age_s: float = 3600.0):
         session.current = SelectionRecord(machine, int(payload["port"]), SelectionState.VERIFIED,
                                           str(payload.get("detail", "")), float(payload["at"]))
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, PermissionError): pass
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
     return session

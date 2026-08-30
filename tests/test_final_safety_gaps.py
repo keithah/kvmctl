@@ -1,4 +1,5 @@
 import json
+import stat
 import threading
 import pytest
 from kvmctl.journal import Journal
@@ -82,6 +83,24 @@ def test_persistence_rejects_symlinked_parent_and_lock(tmp_path):
     with pytest.raises(PermissionError):
         with store._locked():
             pass
+
+
+def test_journal_requires_private_regular_file_and_rejects_symlinked_parent(tmp_path):
+    from kvmctl.journal import Journal
+
+    path = tmp_path / "nested" / "journal.jsonl"
+    Journal(path).append({"ok": True})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    path.chmod(0o644)
+    with pytest.raises(PermissionError):
+        Journal(path).append({"ok": False})
+
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        Journal(linked / "journal.jsonl").append({"ok": False})
 
 
 @pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
