@@ -451,6 +451,7 @@ class SemanticSurface:
 
     def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
                              approved: bool = False, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
         try:
             canonical_input = validate_plan(plan) if plan is not None else None
         except (TypeError, ValueError, KeyError):
@@ -522,6 +523,7 @@ class SemanticSurface:
 
     def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool = False,
                              approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
         invocation_target = target
         if invocation_target is None:
             for definition in self.workflow_repository.list():

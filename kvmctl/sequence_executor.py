@@ -372,6 +372,17 @@ class SequenceExecutor:
                 result.ok = False
                 self._best_effort_checkpoint("cleanup_failed", target=authorization.target,
                                              plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
+            screen_executor = self._screen_executor
+            self._screen_executor = None
+            self._screen_poisoned = False
+            if screen_executor is not None:
+                try:
+                    screen_executor.shutdown(wait=False, cancel_futures=True)
+                except BaseException:
+                    cleanup_errors.append("screen executor shutdown failed")
+                    result.cleanup_errors = tuple(cleanup_errors)
+                    result.cleanup_ok = False
+                    result.ok = False
             result.elapsed_ms = max(0, int((self.clock() - start) * 1000))
             try:
                 lock.release()
@@ -457,7 +468,11 @@ class SequenceExecutor:
         ocr = getattr(self.client, "ocr", None)
         if snapshot is None or ocr is None:
             raise RuntimeError("screen assertion unavailable")
-        remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
+        self._check_action_window()
+        remaining = min(
+            self._active_expires_at or float("inf"),
+            self._active_deadline or float("inf"),
+        ) - self.clock()
         if remaining <= 0:
             raise TimeoutError("sequence deadline expired")
         if getattr(self, "_screen_poisoned", False):
@@ -478,9 +493,12 @@ class SequenceExecutor:
                 raise RuntimeError("screen assertion unavailable") from exc
             if not isinstance(frame, (bytes, bytearray)) or len(frame) > self.SCREEN_MAX_BYTES:
                 raise RuntimeError("screen assertion unavailable")
-            remaining = (self._active_deadline or (self.clock() + 1.0)) - self.clock()
+            remaining = min(
+                self._active_expires_at or float("inf"),
+                self._active_deadline or float("inf"),
+            ) - self.clock()
+            self._check_action_window()
             if remaining <= 0:
-                self._screen_poisoned = True
                 raise TimeoutError("sequence deadline expired")
             try:
                 text = executor.submit(ocr, bytes(frame)).result(timeout=remaining)

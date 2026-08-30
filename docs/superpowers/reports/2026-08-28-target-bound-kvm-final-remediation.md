@@ -169,3 +169,9 @@ Verification: `tests/test_sequence_mcp.py` — `30 passed`; full suite — `336 
 The semantic authorization boundary and `SequenceExecutor.authorize()` now require exact boolean approval and finite, integral, positive TTL values no greater than the 30-second policy maximum. MCP sequence authorization (including inline plans) applies the same integral bounded TTL validation and forwards values without coercion. Malformed authorization inputs are rejected before executor authorization; valid integer-valued controls remain accepted. Added direct semantic, executor, and inline MCP regressions with valid controls.
 
 Verification: focused semantic/executor/MCP tests — `74 passed in 0.32s`; full suite — `342 passed, 3 skipped in 23.19s`; compileall and `git diff --check` — exit 0.
+
+## Rejected review remediation (2026-08-30)
+
+Semantic sequence and workflow execution boundaries now validate exact boolean approval and finite, integral, positive bounded TTL values even when a caller supplies an approval token. Screen capture and OCR submission both re-check authorization expiry and use the minimum authorization/deadline remaining window. Short-lived sequence executions explicitly shut down their screen worker in final cleanup while preserving poisoned-worker behavior for direct bounded-call use. Added regressions for scalar bypass, expiry between capture and OCR, pre-expiry snapshot rejection, and worker cleanup.
+
+Verification: focused semantic/screen tests — `22 passed in 0.11s`; full suite — `350 passed, 3 skipped in 24.01s`; compileall and `git diff --check` — exit 0.

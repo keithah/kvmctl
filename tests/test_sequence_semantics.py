@@ -98,6 +98,38 @@ def test_sequence_authorize_rejects_fractional_ttl_before_executor():
     assert executor.authorizations == []
 
 
+@pytest.mark.parametrize("approved, ttl_s, error", [
+    ("false", 30, TypeError),
+    (True, "30", ValueError),
+    (True, 1.5, ValueError),
+    (True, float("inf"), ValueError),
+])
+def test_sequence_execute_validates_authorization_scalars_with_token(approved, ttl_s, error):
+    executor = FakeExecutor()
+    surf = surface(write_enabled=True, executor=executor)
+    surf.kvm_sequence_authorize(PLAN, approved=True)
+
+    with pytest.raises(error, match="approved|ttl"):
+        surf.kvm_sequence_execute(PLAN, approval_token="fake-token",
+                                  approved=approved, ttl_s=ttl_s)
+    assert executor.executions == []
+
+
+def test_workflow_execute_validates_authorization_scalars_with_token():
+    repository = WorkflowRepository.from_mappings([
+        {"name": "hello", "target": "pve1", "steps": PLAN["actions"]}
+    ])
+    executor = FakeExecutor()
+    surf = surface(write_enabled=True, executor=executor, repository=repository)
+    revision = repository.list()[0].revision
+    surf.kvm_workflow_authorize("hello", revision, approved=True)
+
+    with pytest.raises(TypeError, match="approved"):
+        surf.kvm_workflow_execute("hello", revision, approval_token="fake-token",
+                                  approved="false")
+    assert executor.executions == []
+
+
 def test_inline_and_named_workflow_share_executor_and_envelope():
     raw = {"name": "hello", "target": "pve1", "steps": PLAN["actions"]}
     repository = WorkflowRepository.from_mappings([raw])
