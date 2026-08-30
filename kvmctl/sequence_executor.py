@@ -536,7 +536,8 @@ class SequenceExecutor:
                 frame_future = submit(snapshot)
                 frame = frame_future.result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
-                self._watch_screen_future(executor, frame_future)
+                if frame_future is not None:
+                    self._watch_screen_future(executor, frame_future)
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc
             if not isinstance(frame, (bytes, bytearray)) or len(frame) > self.SCREEN_MAX_BYTES:
@@ -553,7 +554,8 @@ class SequenceExecutor:
                 ocr_future = submit(ocr, bytes(frame))
                 text = ocr_future.result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
-                self._watch_screen_future(executor, ocr_future)
+                if ocr_future is not None:
+                    self._watch_screen_future(executor, ocr_future)
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc
             self._screen_poisoned = False

@@ -186,3 +186,22 @@ def test_timeout_keeps_active_screen_worker_without_replacement(tmp_path):
         time.sleep(0.01)
     assert device_id not in sequence_executor._SCREEN_RESOURCES
     assert worker._shutdown is True
+
+
+def test_concurrent_screen_submission_failure_is_bounded(tmp_path, monkeypatch):
+    real_executor = sequence_executor.ThreadPoolExecutor
+
+    class FailingSubmitExecutor(real_executor):
+        def submit(self, *args, **kwargs):
+            raise TimeoutError("submission failed")
+
+    monkeypatch.setattr(sequence_executor, "ThreadPoolExecutor", FailingSubmitExecutor)
+    ex = SequenceExecutor(SlowClient(), ready_session(), Journal(tmp_path / "j"),
+                          clock=lambda: 0.0, device_id="screen-submit-failure")
+    planned = ex.plan({"target": "pve2", "actions": [{"type": "assert_screen", "contains": "x"}]})
+    auth = ex.authorize(planned, approved=True)
+
+    result = ex.execute(auth.token)
+
+    assert result.ok is False
+    assert result.error == "screen assertion unavailable"
