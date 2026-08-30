@@ -3,6 +3,7 @@ import threading
 import pytest
 from kvmctl.journal import Journal
 from kvmctl.session_store import FileAuthorizationStore, load_session, save_session
+from kvmctl.session_store import _atomic_write
 from kvmctl.client import effective_endpoint_identity
 from kvmctl.machines import device_lock
 from kvmctl.sequence_executor import SequenceExecutor
@@ -81,6 +82,59 @@ def test_persistence_rejects_symlinked_parent_and_lock(tmp_path):
     with pytest.raises(PermissionError):
         with store._locked():
             pass
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
+def test_session_persistence_requires_exact_0600_files(tmp_path, mode):
+    path = tmp_path / "session.json"
+    save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+    key = path.with_name("session.json.key")
+    path.chmod(mode)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+    path.chmod(0o600)
+    key.chmod(mode)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
+def test_authorization_persistence_requires_exact_0600_files(tmp_path, mode):
+    store = FileAuthorizationStore(str(tmp_path / "auth.json"))
+    executor = SequenceExecutor(FakeClient(), ready_session(), Journal(tmp_path / "j"),
+                                authorization_store=store)
+    auth = executor.authorize(executor.plan({"target": "pve2", "actions": [{"type": "release_all"}]}), approved=True)
+    key = tmp_path / "auth.json.key"
+    key.chmod(mode)
+    with pytest.raises(PermissionError):
+        store.put(auth)
+    key.chmod(0o600)
+    (tmp_path / "auth.json").chmod(mode)
+    with pytest.raises(PermissionError):
+        store.put(auth)
+
+
+def test_atomic_write_uses_original_parent_if_path_is_replaced(tmp_path, monkeypatch):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original_replace = __import__("os").replace
+    swapped = False
+
+    def replace(src, dst, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            moved = tmp_path / "moved"
+            parent.rename(moved)
+            parent.symlink_to(outside, target_is_directory=True)
+        return original_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr("kvmctl.session_store.os.replace", replace)
+    _atomic_write(parent / "state.json", "secret")
+    assert (tmp_path / "moved" / "state.json").read_text() == "secret"
+    assert not (outside / "state.json").exists()
 
 
 def test_device_lock_rejects_symlinked_lock_file(tmp_path, monkeypatch):

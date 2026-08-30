@@ -193,3 +193,21 @@ Verification: focused persistence and screen-worker tests — `31 passed`; full 
 Sequence execution now owns its per-device screen worker lifecycle: completed workers are removed from `_SCREEN_RESOURCES` under the submission lock and shut down during execution cleanup. If a bounded snapshot/OCR call times out while still running, its poisoned worker remains registered to prevent replacement workers and concurrent device calls, then is retired and shut down automatically when the call finishes. Added regressions for normal and failure cleanup, active timeout preservation, and post-timeout retirement.
 
 Verification: focused screen-worker tests — `7 passed`.
+
+## Exact file modes and parent-descriptor atomic persistence (2026-08-30)
+
+Persistence regular files now require exact mode `0600` on both path validation and opened descriptors. Atomic writes hold a no-follow descriptor for every parent component, create temporary files relative to that descriptor, replace by directory file descriptors, and fsync the directory, preventing validated-parent replacement races while retaining cleanup and atomicity. Added regressions for permissive modes and parent replacement.
+
+```text
+Focused persistence tests:
+59 passed in 0.14s
+
+Full suite:
+366 passed, 3 skipped in 24.19s
+
+compileall:
+exit 0
+
+git diff --check:
+exit 0
+```

@@ -16,26 +16,43 @@ class AuthorizationStoreIntegrityError(PermissionError):
 
 
 def _secure_dir(path: pathlib.Path, *, create=False) -> None:
+    fd = _open_secure_dir(path, create=create)
+    os.close(fd)
+
+
+def _open_secure_dir(path: pathlib.Path, *, create=False) -> int:
+    """Open every parent component without following symlinks."""
     path = pathlib.Path(path).expanduser()
-    if create:
-        parts = path.parts
-        current = pathlib.Path(parts[0])
-        for part in parts[1:]:
-            current /= part
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    absolute = path.is_absolute()
+    fd = os.open(os.sep if absolute else ".", flags)
+    try:
+        parts = path.parts[1:] if absolute else path.parts
+        for part in parts:
             try:
-                info = current.lstat()
+                next_fd = os.open(part, flags, dir_fd=fd)
             except FileNotFoundError:
-                current.mkdir(mode=0o700)
-                info = current.lstat()
-            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-                raise PermissionError(f"unsafe persistent directory: {current}")
-        info = path.lstat()
+                if not create:
+                    raise
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                next_fd = os.open(part, flags, dir_fd=fd)
+            except OSError as exc:
+                raise PermissionError(f"unsafe persistent directory: {path}") from exc
+            os.close(fd)
+            fd = next_fd
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode):
+                raise PermissionError(f"unsafe persistent directory: {path}")
+        info = os.fstat(fd)
         if info.st_uid != os.getuid() or info.st_mode & 0o022:
             raise PermissionError(f"unsafe persistent directory: {path}")
-        return
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
-        raise PermissionError(f"unsafe persistent directory: {path}")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
@@ -45,7 +62,7 @@ def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
         if allow_missing: return
         raise
     if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-            or info.st_mode & 0o077):
+            or stat.S_IMODE(info.st_mode) != 0o600):
         raise PermissionError(f"unsafe persistent file: {path}")
 
 
@@ -61,7 +78,7 @@ def _read_regular(path: pathlib.Path, *, allow_missing=False) -> bytes | None:
     try:
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) & 0o077):
+                or stat.S_IMODE(info.st_mode) != 0o600):
             raise PermissionError(f"unsafe persistent file: {path}")
         chunks = []
         while True:
@@ -77,6 +94,7 @@ def _create_secret(path: pathlib.Path) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o600)
     try:
+        os.fchmod(fd, 0o600)
         os.write(fd, os.urandom(32))
         os.fsync(fd)
     finally:
@@ -85,11 +103,28 @@ def _create_secret(path: pathlib.Path) -> None:
 
 def _atomic_write(path: pathlib.Path, data: str) -> None:
     path = pathlib.Path(path)
-    _secure_dir(path.parent)
-    _secure_file(path, allow_missing=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp = pathlib.Path(tmp_name)
+    parent_fd = _open_secure_dir(path.parent)
+    tmp_name = None
     try:
+        try:
+            info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                raise PermissionError(f"unsafe persistent file: {path}")
+        candidates = tempfile._get_candidate_names()
+        for candidate in candidates:
+            tmp_name = f".{path.name}.{candidate}.tmp"
+            try:
+                fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=parent_fd)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileExistsError("unable to create temporary persistence file")
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(data)
@@ -98,18 +133,16 @@ def _atomic_write(path: pathlib.Path, data: str) -> None:
             info = os.fstat(stream.fileno())
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) != 0o600):
-            raise PermissionError(f"unsafe temporary file: {tmp}")
-        os.replace(tmp, path)
-        dir_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+            raise PermissionError(f"unsafe temporary file: {path.parent / tmp_name}")
+        os.replace(tmp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
     finally:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        os.close(parent_fd)
 
 
 def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
