@@ -114,6 +114,10 @@ class Journal:
                         except BaseException as original:
                             try:
                                 os.ftruncate(fd, offset)
+                                try:
+                                    os.fsync(fd)
+                                except BaseException as rollback_error:
+                                    original.add_note(f"journal rollback fsync failed: {rollback_error!r}")
                             except BaseException as rollback_error:
                                 original.add_note(f"journal rollback failed: {rollback_error!r}")
                             raise
