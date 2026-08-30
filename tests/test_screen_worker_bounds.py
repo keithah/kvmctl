@@ -93,6 +93,18 @@ def test_screen_ocr_is_not_submitted_after_authorization_expiry(tmp_path):
     assert client.ocr_calls == 0
 
 
+def test_blocked_screen_worker_is_shared_across_repeated_executors(tmp_path):
+    workers = []
+    for index in range(3):
+        ex = SequenceExecutor(SlowClient(), ready_session(), Journal(tmp_path / f"j{index}"),
+                              clock=lambda: 0.0)
+        ex._active_deadline = 0.01
+        with pytest.raises(RuntimeError, match="screen assertion unavailable"):
+            ex._dispatch_assert_screen(type("A", (), {"contains": "x"})())
+        workers.append(ex._screen_executor)
+    assert workers[0] is workers[1] is workers[2]
+
+
 def test_sequence_execution_cleans_up_screen_executor(tmp_path):
     class Client(ExpiringScreenClient):
         def snapshot_jpeg(self):

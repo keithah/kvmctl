@@ -145,6 +145,25 @@ def test_non_integrity_oserror_still_fails_closed(tmp_path, monkeypatch):
     assert store.peek("missing", binding="b") is None
 
 
+def test_lock_acquisition_oserror_fails_closed(tmp_path, monkeypatch):
+    store = FileAuthorizationStore(str(tmp_path / "auth"))
+    monkeypatch.setattr(store, "_locked", lambda: (_ for _ in ()).throw(OSError("lock unavailable")))
+    assert store.peek("missing", binding="b") is None
+
+
+def test_lock_validation_oserror_fails_closed(tmp_path, monkeypatch):
+    store = FileAuthorizationStore(str(tmp_path / "auth"))
+    monkeypatch.setattr("kvmctl.session_store._secure_file", lambda *a, **k: (_ for _ in ()).throw(OSError("validation unavailable")))
+    assert store.peek("missing", binding="b") is None
+
+
+def test_integrity_error_from_lock_path_is_not_swallowed(tmp_path, monkeypatch):
+    store = FileAuthorizationStore(str(tmp_path / "auth"))
+    monkeypatch.setattr(store, "_locked", lambda: (_ for _ in ()).throw(AuthorizationStoreIntegrityError("corrupt lock")))
+    with pytest.raises(AuthorizationStoreIntegrityError):
+        store.peek("missing", binding="b")
+
+
 def test_put_rejects_malformed_capability_without_modifying_store(tmp_path):
     path = tmp_path / "auth"
     store = FileAuthorizationStore(str(path))

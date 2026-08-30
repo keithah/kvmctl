@@ -49,6 +49,30 @@ def _secure_file(path: pathlib.Path, *, allow_missing=False) -> None:
         raise PermissionError(f"unsafe persistent file: {path}")
 
 
+def _read_regular(path: pathlib.Path, *, allow_missing=False) -> bytes | None:
+    """Read one validated file descriptor, never a path after validation."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise PermissionError(f"unsafe persistent file: {path}")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+
 def _create_secret(path: pathlib.Path) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags, 0o600)
@@ -96,13 +120,15 @@ def save_session(session: SessionState, path: str, *, endpoint: str) -> None:
                "state": rec.state.value, "detail": rec.detail[:300], "at": rec.at}
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     p, keypath = _paths(path); _secure_dir(p.parent, create=True)
-    if not keypath.exists():
+    if _read_regular(keypath, allow_missing=True) is None:
         try:
             _create_secret(keypath)
         except FileExistsError:
             pass
-    _secure_file(keypath); _secure_file(p, allow_missing=True)
-    key = keypath.read_bytes()
+    key = _read_regular(keypath)
+    if key is None:
+        raise FileNotFoundError(keypath)
+    _secure_file(p, allow_missing=True)
     envelope = {"payload": payload, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
     _atomic_write(p, json.dumps(envelope, sort_keys=True))
 
@@ -139,17 +165,18 @@ class FileAuthorizationStore:
             lock.close()
 
     def _records(self):
-        if not self.path.exists(): return []
-        _secure_file(self.path); _secure_file(self.keypath)
+        raw_file = _read_regular(self.path, allow_missing=True)
+        if raw_file is None: return []
+        key = _read_regular(self.keypath)
         try:
-            env = json.loads(self.path.read_text(encoding="utf-8"))
+            env = json.loads(raw_file.decode("utf-8"))
             if "payloads" in env:
                 records = env["payloads"]
                 raw = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
             else:  # read old single-capability files during migration
                 records = [env["payload"]]
                 raw = json.dumps(env["payload"], sort_keys=True, separators=(",", ":")).encode()
-            valid = hmac.compare_digest(env["mac"], hmac.new(self.keypath.read_bytes(), raw, hashlib.sha256).hexdigest())
+            valid = hmac.compare_digest(env["mac"], hmac.new(key, raw, hashlib.sha256).hexdigest())
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
         if not valid:
@@ -158,7 +185,8 @@ class FileAuthorizationStore:
 
     def _write_records(self, records):
         raw = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
-        env = {"payloads": records, "mac": hmac.new(self.keypath.read_bytes(), raw, hashlib.sha256).hexdigest()}
+        key = _read_regular(self.keypath)
+        env = {"payloads": records, "mac": hmac.new(key, raw, hashlib.sha256).hexdigest()}
         _atomic_write(self.path, json.dumps(env, sort_keys=True))
 
     def put(self, auth):
@@ -173,7 +201,7 @@ class FileAuthorizationStore:
         except (AttributeError, TypeError, ValueError, KeyError) as exc:
             raise ValueError("invalid authorization") from exc
         with self._locked():
-            if not self.keypath.exists():
+            if _read_regular(self.keypath, allow_missing=True) is None:
                 try:
                     _create_secret(self.keypath)
                 except FileExistsError:
@@ -184,8 +212,8 @@ class FileAuthorizationStore:
             self._write_records(records)
 
     def _read(self, token, *, consume, binding=None):
-        with self._locked():
-            try:
+        try:
+            with self._locked():
                 records = self._records()
                 # Validate every record before selecting or rewriting one.  A
                 # MAC authenticates bytes, not their meaning.
@@ -201,12 +229,12 @@ class FileAuthorizationStore:
                     records[index]["used"] = True
                     self._write_records(records)
                 return auth
-            except AuthorizationStoreIntegrityError:
-                raise
-            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-                raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
-            except OSError:
-                return None
+        except AuthorizationStoreIntegrityError:
+            raise
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise AuthorizationStoreIntegrityError("authorization store integrity failure") from exc
+        except OSError:
+            return None
 
     def _validate_record(self, p):
         from .sequences import plan_hash, validate_plan
@@ -254,10 +282,12 @@ def load_session(path: str, *, endpoint: str, max_age_s: float = 3600.0):
     session = SessionState(); p, keypath = _paths(path)
     try:
         _secure_dir(p.parent)
-        _secure_file(p); _secure_file(keypath)
-        env = json.loads(p.read_text(encoding="utf-8")); payload = env["payload"]
+        raw_file = _read_regular(p); key = _read_regular(keypath)
+        if raw_file is None or key is None:
+            raise FileNotFoundError(p)
+        env = json.loads(raw_file.decode("utf-8")); payload = env["payload"]
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        if not hmac.compare_digest(env["mac"], hmac.new(keypath.read_bytes(), raw, hashlib.sha256).hexdigest()): return session
+        if not hmac.compare_digest(env["mac"], hmac.new(key, raw, hashlib.sha256).hexdigest()): return session
         if payload.get("endpoint") != endpoint or payload.get("state") != "verified": return session
         if time.time() - float(payload["at"]) > max_age_s: return session
         machine = payload["machine"]

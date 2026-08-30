@@ -19,6 +19,8 @@ from .client import effective_endpoint_identity
 
 
 _WAIT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kvmctl-wait")
+_SCREEN_RESOURCES = {}
+_SCREEN_FUTURE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -372,17 +374,8 @@ class SequenceExecutor:
                 result.ok = False
                 self._best_effort_checkpoint("cleanup_failed", target=authorization.target,
                                              plan_hash=authorization.plan_hash, error_count=len(cleanup_errors))
-            screen_executor = self._screen_executor
             self._screen_executor = None
             self._screen_poisoned = False
-            if screen_executor is not None:
-                try:
-                    screen_executor.shutdown(wait=False, cancel_futures=True)
-                except BaseException:
-                    cleanup_errors.append("screen executor shutdown failed")
-                    result.cleanup_errors = tuple(cleanup_errors)
-                    result.cleanup_ok = False
-                    result.ok = False
             result.elapsed_ms = max(0, int((self.clock() - start) * 1000))
             try:
                 lock.release()
@@ -477,17 +470,26 @@ class SequenceExecutor:
             raise TimeoutError("sequence deadline expired")
         if getattr(self, "_screen_poisoned", False):
             raise RuntimeError("screen assertion unavailable")
-        executor = getattr(self, "_screen_executor", None)
-        if executor is None:
-            # One worker is retained per executor.  A timed-out device call
-            # poisons this bounded worker instead of creating leaked threads
-            # on every assertion attempt.
-            executor = self._screen_executor = ThreadPoolExecutor(max_workers=1)
+        with _SCREEN_FUTURE_LOCK:
+            resource = _SCREEN_RESOURCES.get(self.device_id)
+            if resource is None:
+                resource = (ThreadPoolExecutor(max_workers=1, thread_name_prefix="kvmctl-screen"), None)
+                _SCREEN_RESOURCES[self.device_id] = resource
+            executor = self._screen_executor = resource[0]
         # A worker remains poisoned until both bounded calls complete.
         self._screen_poisoned = True
+        def submit(operation, *args):
+            with _SCREEN_FUTURE_LOCK:
+                worker, future = _SCREEN_RESOURCES[self.device_id]
+                if future is not None and not future.done():
+                    raise RuntimeError("screen assertion unavailable")
+                future = worker.submit(operation, *args)
+                _SCREEN_RESOURCES[self.device_id] = (worker, future)
+                return future
+
         try:
             try:
-                frame = executor.submit(snapshot).result(timeout=remaining)
+                frame = submit(snapshot).result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc
@@ -501,7 +503,7 @@ class SequenceExecutor:
             if remaining <= 0:
                 raise TimeoutError("sequence deadline expired")
             try:
-                text = executor.submit(ocr, bytes(frame)).result(timeout=remaining)
+                text = submit(ocr, bytes(frame)).result(timeout=remaining)
             except (FutureTimeout, TimeoutError) as exc:
                 self._screen_poisoned = True
                 raise RuntimeError("screen assertion unavailable") from exc

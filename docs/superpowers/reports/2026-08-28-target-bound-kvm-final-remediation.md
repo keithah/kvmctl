@@ -181,3 +181,9 @@ Verification: focused semantic/screen tests — `22 passed in 0.11s`; full suite
 `FileAuthorizationStore._read()` now propagates typed `AuthorizationStoreIntegrityError` for MAC, schema, and semantic capability corruption instead of swallowing it under the broad `OSError` handler. Ordinary unreadable lookup errors remain fail-closed as `None`, while missing state and valid put/take single-use behavior are unchanged. Added regressions distinguishing corrupt state from missing state and covering non-integrity `OSError` handling.
 
 Verification: focused persistence/auth tests — `33 passed in 0.08s`; full suite — `352 passed, 3 skipped in 23.88s`; compileall and `git diff --check` — exit 0.
+
+## Lock, screen-worker, and persistence descriptor remediation (2026-08-30)
+
+Authorization-store reads now wrap lock acquisition and validation as well as record inspection: ordinary `OSError` lookup failures return a safe miss, while typed integrity failures continue to propagate. Persistence reads for authorization and session/key files now open with `O_NOFOLLOW`, validate the opened descriptor with `fstat`, and consume bytes from that descriptor, removing path check-then-use replacement windows while preserving atomic writes. Screen calls use one bounded worker/future resource per device identity; an unfinished timed-out transport call poisons that resource and subsequent executions cannot create replacement workers or queue additional calls.
+
+Verification: focused persistence and screen-worker tests — `31 passed`; full repository tests, compileall, diff check, and complete diff inspection completed for this remediation.
