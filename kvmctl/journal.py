@@ -57,15 +57,16 @@ def _safe(value: Any, *, depth: int = 0) -> Any:
     return f"<{type(value).__name__}>"
 
 
-def _cleanup(action, label: str) -> None:
+def _cleanup(action, label: str, errors: list[BaseException]) -> None:
     """Attempt cleanup without masking an exception already in flight."""
     primary = sys.exc_info()[1]
     try:
         action()
     except BaseException as cleanup_error:
         if primary is None:
-            raise
-        primary.add_note(f"journal cleanup {label} failed: {cleanup_error!r}")
+            errors.append(cleanup_error)
+        else:
+            primary.add_note(f"journal cleanup {label} failed: {cleanup_error!r}")
 
 
 class Journal:
@@ -87,6 +88,7 @@ class Journal:
         with _lock_for(self.path):
             parent_fd = _open_secure_dir(self.path.parent, create=True)
             lock_fd = None
+            cleanup_errors: list[BaseException] = []
             try:
                 lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
                 try:
@@ -135,16 +137,19 @@ class Journal:
                             raise
                     finally:
                         if fd is not None:
-                            _cleanup(lambda: os.close(fd), "journal fd close")
+                            _cleanup(lambda: os.close(fd), "journal fd close", cleanup_errors)
                 finally:
                     if lock_acquired:
-                        _cleanup(lambda: fcntl.flock(lock_fd, fcntl.LOCK_UN), "lock unlock")
+                        _cleanup(lambda: fcntl.flock(lock_fd, fcntl.LOCK_UN), "lock unlock", cleanup_errors)
             finally:
                 if lock_fd is not None:
-                    _cleanup(lambda: os.close(lock_fd), "lock fd close")
-                    _cleanup(lambda: os.close(parent_fd), "parent fd close")
+                    _cleanup(lambda: os.close(lock_fd), "lock fd close", cleanup_errors)
                 else:
-                    _cleanup(lambda: os.close(parent_fd), "parent fd close")
+                    _cleanup(lambda: os.close(parent_fd), "parent fd close", cleanup_errors)
+                if lock_fd is not None:
+                    _cleanup(lambda: os.close(parent_fd), "parent fd close", cleanup_errors)
+                if not sys.exc_info()[1] and cleanup_errors:
+                    raise cleanup_errors[0]
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:

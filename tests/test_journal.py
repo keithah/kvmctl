@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 
+from kvmctl import journal as journal_module
 from kvmctl.journal import Journal
 
 
@@ -162,3 +163,55 @@ def test_journal_uses_secure_interprocess_lock_file(tmp_path):
     assert stat.S_ISREG(journal_info.st_mode)
     assert journal_info.st_uid == os.getuid()
     assert stat.S_IMODE(journal_info.st_mode) == 0o600
+
+
+def test_journal_attempts_parent_close_after_lock_close_failure(tmp_path, monkeypatch):
+    path = tmp_path / "checkpoints.jsonl"
+    real_open = os.open
+    real_close = os.close
+    real_open_secure_dir = journal_module._open_secure_dir
+    lock_fd = None
+    parent_fd = None
+    close_calls = []
+    parent_attempted = False
+
+    def capture_lock_fd(file, *args, **kwargs):
+        nonlocal lock_fd, parent_fd
+        fd = real_open(file, *args, **kwargs)
+        if str(file).endswith(".lock"):
+            lock_fd = fd
+        elif str(file) == str(path.parent):
+            parent_fd = fd
+        return fd
+
+    def fail_lock_close(fd):
+        nonlocal parent_attempted
+        close_calls.append(fd)
+        if fd == parent_fd:
+            parent_attempted = True
+        if fd == lock_fd:
+            raise OSError("injected lock close failure")
+        return real_close(fd)
+
+    def capture_parent_fd(directory, *, create):
+        nonlocal parent_fd
+        parent_fd = real_open_secure_dir(directory, create=create)
+        return parent_fd
+
+    monkeypatch.setattr(journal_module, "_open_secure_dir", capture_parent_fd)
+    monkeypatch.setattr(os, "open", capture_lock_fd)
+    monkeypatch.setattr(os, "close", fail_lock_close)
+
+    try:
+        Journal(path).append({"ok": True})
+    except OSError as exc:
+        assert "injected lock close failure" in str(exc)
+    else:
+        raise AssertionError("lock close failure was swallowed")
+
+    assert lock_fd is not None
+    assert parent_fd is not None
+    assert parent_attempted
+    assert lock_fd in close_calls
+    assert parent_fd in close_calls
+    assert close_calls.index(lock_fd) < close_calls.index(parent_fd)

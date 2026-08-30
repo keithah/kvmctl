@@ -137,7 +137,8 @@ kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_P
 kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
   --insecure --yes sequence-authorize --plan ./plan.json --ttl 30
 kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
-  --insecure --yes sequence-execute --plan ./plan.json --ttl 30
+  --insecure --yes sequence-execute --plan ./plan.json --ttl 30 \
+  --approval-token "$APPROVAL_TOKEN"
 ```
 
 Named workflow definitions can be loaded for standalone CLI use with `--workflows FILE` or `KVMCTL_WORKFLOWS_FILE`. The file is JSON containing either a list of definitions or `{ "workflows": [...] }`; definitions are immutable and declarative. Run `workflow-list` and `workflow-inspect` first, then `--yes workflow-authorize NAME --revision REVISION`, and finally `--yes workflow-execute NAME --revision REVISION --approval-token TOKEN`. Repeat the file and revision on each invocation. Tokens are opaque, single-use capabilities bound to the exact canonical plan hash, target, endpoint, verified session, and expiry; do not log them.
