@@ -204,8 +204,10 @@ class DeviceLock:
 
     def release(self):
         try:
-            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
-            self._file.close()
+            try:
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._file.close()
         finally:
             self._local.release()
 

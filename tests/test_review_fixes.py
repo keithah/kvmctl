@@ -83,6 +83,55 @@ def test_mcp_rearm_otg_without_sleep_is_refused():
     assert out["ok"] is False
 
 
+def test_device_lock_release_closes_file_when_unlock_fails(monkeypatch, tmp_path):
+    import fcntl
+    from kvmctl.machines import DeviceLock
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(tmp_path))
+    lock = DeviceLock("release-test")
+    assert lock.acquire()
+    original = fcntl.flock
+    def fail_unlock(fd, flags):
+        if flags == fcntl.LOCK_UN:
+            raise OSError("unlock failed")
+        return original(fd, flags)
+    monkeypatch.setattr(fcntl, "flock", fail_unlock)
+    with pytest.raises(OSError):
+        lock.release()
+    assert lock._file.closed
+
+
+def test_workflow_inspection_redacts_every_text_action():
+    from kvmctl.workflows import WorkflowRepository
+    repo = WorkflowRepository.from_mappings([{"name": "all-text", "target": "pve2", "steps": [
+        {"type": "text", "value": "ordinary text"},
+        {"type": "text", "value": "tokenless but still private"},
+    ]}])
+    inspected = repo.inspect("all-text")
+    assert [a["value"] for a in inspected["actions"]] == ["[REDACTED]", "[REDACTED]"]
+
+
+def test_typed_sequence_plan_is_canonicalized_before_hashing():
+    from kvmctl.sequences import Action, SequencePlan, canonicalize_plan
+    plan = SequencePlan(" pve2 ", (Action("release_all"),))
+    assert canonicalize_plan(plan)["target"] == "pve2"
+
+
+def test_expired_authorization_records_are_pruned(tmp_path):
+    from kvmctl.session_store import FileAuthorizationStore
+    from test_sequence_executor import FakeClient, ready_session
+    from kvmctl.journal import Journal
+    from kvmctl.sequence_executor import SequenceExecutor
+    now = [0.0]
+    store = FileAuthorizationStore(str(tmp_path / "auth.json"), clock=lambda: now[0])
+    ex = SequenceExecutor(FakeClient(), ready_session(), Journal(tmp_path / "j"), clock=lambda: now[0])
+    auth = ex.authorize(ex.plan({"target": "pve2", "actions": [{"type": "release_all"}]}), approved=True)
+    store.put(auth)
+    now[0] = 31.0
+    assert store.peek(auth.token) is None
+    with store._locked() as parent_fd:
+        assert store._records(parent_fd) == []
+
+
 def test_no_password_literal_in_repo_sources():
     """The machine password must appear nowhere in tracked text files."""
     import pathlib

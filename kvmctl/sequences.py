@@ -190,7 +190,9 @@ def validate_plan(plan: SequencePlan | Mapping[str, Any]) -> SequencePlan:
 
 
 def canonicalize_plan(plan: SequencePlan | Mapping[str, Any]) -> dict[str, Any]:
-    return validate_plan(plan).to_mapping()
+    canonical = validate_plan(plan).to_mapping()
+    canonical["target"] = canonical["target"].strip()
+    return canonical
 
 
 def plan_hash(plan: SequencePlan | Mapping[str, Any]) -> str:

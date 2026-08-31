@@ -301,7 +301,13 @@ class FileAuthorizationStore:
                 records = self._records(parent_fd)
                 # Validate every record before selecting or rewriting one.  A
                 # MAC authenticates bytes, not their meaning.
-                capabilities = [self._validate_record(item) for item in records]
+                capabilities = [self._validate_record(item, allow_expired=True) for item in records]
+                now = self.clock()
+                live = [item for item in records if float(item["expires_at"]) > now]
+                if len(live) != len(records):
+                    records = live
+                    self._write_records(records, parent_fd)
+                    capabilities = [self._validate_record(item) for item in records]
                 index = next((i for i, item in enumerate(capabilities) if item.token == token), None)
                 if index is None:
                     return None
@@ -320,7 +326,7 @@ class FileAuthorizationStore:
         except OSError:
             return None
 
-    def _validate_record(self, p):
+    def _validate_record(self, p, *, allow_expired=False):
         from .sequences import plan_hash, validate_plan
         from .sequence_executor import SequenceAuthorization
         required = {"token", "target", "plan", "plan_hash", "expires_at",
@@ -353,7 +359,7 @@ class FileAuthorizationStore:
         now = self.clock()
         if not math.isfinite(expires_at) or not math.isfinite(now) or not math.isfinite(self.max_ttl_s):
             raise ValueError("invalid authorization expiry")
-        if expires_at <= now or expires_at > now + self.max_ttl_s:
+        if (expires_at <= now and not allow_expired) or expires_at > now + self.max_ttl_s:
             raise ValueError("authorization expiry outside allowed window")
         return SequenceAuthorization(plan, p["target"], p["plan_hash"], expires_at,
             p["workflow_revision"], token=p["token"], session_id=p["session_id"], binding=p["binding"])

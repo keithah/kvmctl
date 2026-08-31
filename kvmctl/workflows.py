@@ -17,7 +17,6 @@ class WorkflowError(ValueError):
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _INDEPENDENT_TARGET = "__target_independent__"
-_SECRET_TEXT = re.compile(r"(?:token|password|authorization|cookie|secret)", re.IGNORECASE)
 _ALLOWED = {"name", "target", "target_independent", "max_duration_ms", "unexpected_screen_policy", "steps", "revision"}
 
 
@@ -121,7 +120,7 @@ class WorkflowDefinition:
             canonical["target"] = None
         actions = [dict(action) for action in canonical.pop("actions")]
         for action in actions:
-            if action.get("type") == "text" and _SECRET_TEXT.search(action.get("value", "")):
+            if action.get("type") == "text":
                 action["value"] = "[REDACTED]"
         return {
             "name": self.name,
