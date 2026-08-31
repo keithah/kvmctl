@@ -26,6 +26,9 @@ func workflowCommand(t *testing.T, args ...string) (string, error) {
 func workflowRepoFile(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "workflows.json")
+	if err := os.Chmod(filepath.Dir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(p, []byte(workflowFixture), 0600); err != nil {
 		t.Fatal(err)
 	}
