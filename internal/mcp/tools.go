@@ -39,6 +39,7 @@ const (
 // RegisterTools registers all API operations as MCP tools.
 func RegisterTools(s *server.MCPServer) {
 	installFreshTenantGate(s)
+	registerSemanticTool(s)
 	s.AddTool(
 		mcplib.NewTool("hid_get-state",
 			mcplib.WithDescription("Get state. Returns the JsonResult."),
