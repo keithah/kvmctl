@@ -40,7 +40,15 @@ type Config struct {
 	envOverrides     map[string]bool `toml:"-"`
 	fileConfig       *Config         `toml:"-"`
 	KvmctlKvmdToken  string          `toml:"kvmd_token"`
+	// Environment-only connection settings; never persisted.
+	KVMCTLToken    string `toml:"-"`
+	KVMCTLUser     string `toml:"-"`
+	KVMCTLPassword string `toml:"-"`
+	KVMCTLCA       string `toml:"-"`
+	KVMCTLInsecure bool   `toml:"-"`
 }
+
+type bundleString string
 
 func Load(configPath string) (*Config, error) {
 	cfg := &Config{
@@ -207,10 +215,37 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	// Base URL override (used by printing-press verify to point at mock/test servers)
-	if v := os.Getenv("KVMCTL_BASE_URL"); v != "" {
-		cfg.BaseURL = v
+	// Environment connection settings match the Python client contract.
+	if v := os.Getenv("KVMCTL_URL"); strings.TrimSpace(v) != "" {
+		cfg.BaseURL = strings.TrimRight(strings.TrimSpace(v), "/")
+	} else if v := os.Getenv("KVMCTL_BASE_URL"); v != "" {
+		cfg.BaseURL = strings.TrimRight(v, "/")
 	}
+	if v := os.Getenv("KVMCTL_TOKEN"); strings.TrimSpace(v) != "" {
+		cfg.KVMCTLToken = strings.TrimSpace(v)
+		cfg.KvmctlKvmdToken = cfg.KVMCTLToken
+		cfg.markEnvOverride("KvmctlKvmdToken")
+		cfg.AuthSource = "env:KVMCTL_TOKEN"
+	} else if v := os.Getenv("KVMCTL_KVMD_TOKEN"); v != "" {
+		cfg.KVMCTLToken = v
+		cfg.KvmctlKvmdToken = v
+		cfg.markEnvOverride("KvmctlKvmdToken")
+		cfg.AuthSource = "env:KVMCTL_KVMD_TOKEN"
+	}
+	cfg.KVMCTLUser = os.Getenv("KVMCTL_USER")
+	cfg.KVMCTLPassword = os.Getenv("KVMCTL_PASSWORD")
+	cfg.KVMCTLCA = strings.TrimSpace(os.Getenv("KVMCTL_CA_BUNDLE"))
+	cfg.KVMCTLInsecure = envTruthy(os.Getenv("KVMCTL_INSECURE"))
 	return cfg, nil
+}
+
+func envTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveConfigPath(configPath string) (string, bool, error) {
