@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"kvmctl-pp-cli/internal/client"
 	"kvmctl-pp-cli/internal/config"
+	"kvmctl-pp-cli/internal/results"
+	"kvmctl-pp-cli/internal/switcher"
 )
 
 // pp:data-source live
@@ -337,28 +338,38 @@ func newMouseCmd(flags *rootFlags) *cobra.Command {
 
 func newTargetSwitchCmd(flags *rootFlags) *cobra.Command {
 	var port int
-	cmd := &cobra.Command{Use: "target-switch", Short: "Switch a sequential TH41-3 KVM target", Annotations: map[string]string{"pp:novel": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
-		if port < 1 || port > 4 {
-			return usageErr(fmt.Errorf("port must be 1..4"))
+	var yes bool
+	cmd := &cobra.Command{Use: "target-switch", Short: "Switch a sequential TH41-3 KVM target", Annotations: map[string]string{"pp:novel": "true", "mcp:destructive": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
+		planned, err := switcher.Plan(switcher.TH413, port)
+		if err != nil {
+			return usageErr(err)
 		}
-		c, e := kvmdClient(flags)
-		if e != nil {
-			return e
+		if !flags.dryRun && !yes {
+			return fmt.Errorf("target switching sends physical key events; re-run with --yes")
 		}
-		seq := []string{"ControlRight", "ControlRight", "Digit" + strconv.Itoa(port), "Enter"}
+		c, err := kvmdClient(flags)
+		if err != nil {
+			return err
+		}
 		if !flags.dryRun {
-			for _, k := range seq {
-				if e = c.KVMDKey(cmd.Context(), k, true); e != nil {
-					return e
+			for i, ev := range planned {
+				if err = c.KVMDKey(cmd.Context(), ev.Key, ev.State == "down"); err != nil {
+					return err
 				}
-				if e = c.KVMDKey(cmd.Context(), k, false); e != nil {
-					return e
+				if i+1 < len(planned) {
+					time.Sleep(switcher.TH413.InterKeyDelay)
 				}
-				time.Sleep(200 * time.Millisecond)
 			}
+			time.Sleep(switcher.TH413.SettleDelay)
 		}
-		return kvmdJSON(flags, cmd, map[string]any{"profile": "terived-th41-3", "port": port, "events": len(seq) * 2})
+		events := make([]map[string]string, 0, len(planned))
+		for _, ev := range planned {
+			events = append(events, map[string]string{"key": ev.Key, "state": ev.State})
+		}
+		out := results.Build("target-switch", "kvm", false, "", true, !flags.dryRun, "completed", map[string]any{"profile": switcher.TH413.Name, "port": port, "events": events}, nil)
+		return kvmdJSON(flags, cmd, out)
 	}}
 	cmd.Flags().IntVar(&port, "port", 0, "target port (1..4)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm physical key events")
 	return cmd
 }
