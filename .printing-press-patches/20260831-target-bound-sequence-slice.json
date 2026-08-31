@@ -8,6 +8,9 @@
     "internal/sequence/sequence.go",
     "internal/sequence/document.go",
     "internal/sequence/sequence_test.go",
+    "internal/sequence/workflow.go",
+    "internal/sequence/workflow_test.go",
+    "internal/sequence/workflow_security_test.go",
     "internal/cli/sequence_novel.go"
   ],
   "summary": "Add target-bound sequence validation, single-use expiring authorization, safe local persistence, cancellation-aware execution lifecycle, device serialization, and redacted journaling through novel extension hooks.",
