@@ -80,6 +80,27 @@ def test_named_and_inline_workflow_commands_have_json_envelopes(monkeypatch, cap
         assert json.loads(capsys.readouterr().out)["operation"] == operation
 
 
+def test_snapshot_out_remains_jpeg_path_and_is_not_overwritten_with_json(monkeypatch, tmp_path):
+    class SnapshotSurface(FakeSurface):
+        def snapshot(self, *, path):
+            open(path, "wb").write(b"jpeg")
+            return {"operation": "snapshot", "ok": True}
+    monkeypatch.setattr("kvmctl.cli.SemanticSurface", SnapshotSurface)
+    destination = tmp_path / "snapshot.jpg"
+    assert main(["--url", "https://kvm.test", "snapshot", "--out", str(destination)], client=object()) == 0
+    assert destination.read_bytes() == b"jpeg"
+
+
+def test_sequence_adapter_rejects_dropped_approval_token(monkeypatch):
+    from kvmctl.cli import _call_sequence
+    class Legacy:
+        def kvm_sequence_execute(self, plan, *, approved, ttl_s):
+            return {"ok": True}
+    with pytest.raises(TypeError, match="approval_token"):
+        _call_sequence(Legacy(), "kvm_sequence_execute", PLAN,
+                       approval_token="opaque", approved=True, ttl_s=30.0)
+
+
 def test_sequence_plan_reads_file_and_writes_optional_output(monkeypatch, tmp_path, capsys):
     FakeSurface.calls = []
     monkeypatch.setattr("kvmctl.cli.SemanticSurface", FakeSurface)
@@ -93,13 +114,15 @@ def test_sequence_plan_reads_file_and_writes_optional_output(monkeypatch, tmp_pa
     assert json.loads(capsys.readouterr().out)["operation"] == "kvm_sequence_plan"
 
 
-def test_sequence_execute_passes_supplied_plan_for_exact_validation(monkeypatch, capsys):
+def test_sequence_execute_rejects_legacy_adapter_that_drops_token(monkeypatch, capsys):
     FakeSurface.calls = []
     monkeypatch.setattr("kvmctl.cli.SemanticSurface", FakeSurface)
     rc = main(["--url", "https://kvm.test", "--yes", "sequence-execute",
                "--plan", json.dumps(PLAN), "--approval-token", "opaque"], client=object())
-    assert rc == 0
-    assert FakeSurface.calls == [("execute", PLAN, True, 30.0)]
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["ok"] is False
+    assert FakeSurface.calls == []
 
 
 def test_cli_uses_supplied_verified_session_context(monkeypatch):

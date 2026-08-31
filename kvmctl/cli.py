@@ -170,9 +170,12 @@ def _call_sequence(surface, method: str, *args, **kwargs):
         parameters = inspect.signature(fn).parameters
     except (TypeError, ValueError):
         parameters = {}
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD
+                         for p in parameters.values())
+    if kwargs.get("approval_token") and "approval_token" not in parameters and not accepts_kwargs:
+        raise TypeError("adapter does not support approval_token")
     filtered = {key: value for key, value in kwargs.items()
-                if key in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD
-                                            for p in parameters.values())}
+                if key in parameters or accepts_kwargs}
     return fn(*args, **filtered)
 
 
@@ -357,7 +360,7 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
     if session is None and hasattr(surf, "session"):
         save_session(surf.session, __import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=endpoint)
     rendered = json.dumps(out)
-    if getattr(args, "out", None):
+    if getattr(args, "out", None) and args.command != "snapshot":
         try:
             with open(args.out, "w", encoding="utf-8") as fh:
                 fh.write(rendered)

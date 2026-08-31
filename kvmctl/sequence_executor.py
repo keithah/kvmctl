@@ -522,12 +522,17 @@ class SequenceExecutor:
         # A worker remains poisoned until both bounded calls complete.
         self._screen_poisoned = True
         def submit(operation, *args):
+            nonlocal resource
             with _SCREEN_FUTURE_LOCK:
-                worker, future = _SCREEN_RESOURCES[self.device_id]
+                current = _SCREEN_RESOURCES.get(self.device_id)
+                if current != resource:
+                    raise RuntimeError("screen assertion unavailable")
+                worker, future = resource
                 if future is not None and not future.done():
                     raise RuntimeError("screen assertion unavailable")
                 future = worker.submit(operation, *args)
-                _SCREEN_RESOURCES[self.device_id] = (worker, future)
+                resource = (worker, future)
+                _SCREEN_RESOURCES[self.device_id] = resource
             return future
 
         try:

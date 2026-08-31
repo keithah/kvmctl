@@ -1,6 +1,6 @@
 """Tamper-evident persistence for verified sessions and capabilities."""
 from __future__ import annotations
-import hashlib, hmac, json, math, os, pathlib, stat, tempfile, time, errno
+import hashlib, hmac, json, math, os, pathlib, stat, time, errno, secrets
 from contextlib import contextmanager
 import fcntl
 from .machines import SelectionRecord, SelectionState, SessionState
@@ -161,8 +161,8 @@ def _atomic_write(path: pathlib.Path, data: str, *, parent_fd: int | None = None
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                     or stat.S_IMODE(info.st_mode) != 0o600):
                 raise PermissionError(f"unsafe persistent file: {path}")
-        candidates = tempfile._get_candidate_names()
-        for candidate in candidates:
+        for _ in range(128):
+            candidate = secrets.token_hex(16)
             tmp_name = f".{path.name}.{candidate}.tmp"
             try:
                 fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
@@ -380,7 +380,9 @@ def load_session(path: str, *, endpoint: str, max_age_s: float = 3600.0):
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         if not hmac.compare_digest(env["mac"], hmac.new(key, raw, hashlib.sha256).hexdigest()): return session
         if payload.get("endpoint") != endpoint or payload.get("state") != "verified": return session
-        if time.time() - float(payload["at"]) > max_age_s: return session
+        timestamp = float(payload["at"])
+        now = time.time()
+        if now - timestamp > max_age_s or timestamp - now > max_age_s: return session
         machine = payload["machine"]
         from .machines import RACK
         if machine not in RACK or int(payload["port"]) != RACK[machine].port: return session

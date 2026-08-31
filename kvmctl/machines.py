@@ -160,7 +160,7 @@ _DEVICE_LOCKS_GUARD = threading.Lock()
 
 
 class DeviceLock:
-    """A re-entrant thread lock backed by a fail-closed cross-process flock."""
+    """A non-reentrant thread lock backed by a fail-closed cross-process flock."""
     def __init__(self, device_id: str):
         root = pathlib.Path(os.environ.get("KVMCTL_LOCK_DIR", "~/.cache/kvmctl/locks")).expanduser()
         # Do not let mkdir -p traverse an attacker-controlled component.

@@ -78,6 +78,7 @@ The registered tools are:
 - `kvm_sequence_plan` — validate a bounded target-bound plan (read-only).
 - `kvm_sequence_authorize` — authorize a plan with explicit approval and bounded TTL.
 - `kvm_sequence_execute` — execute an authorized target-bound plan with cleanup.
+- `kvm_workflow_authorize` — authorize a named workflow revision with explicit approval.
 - `kvm_workflow_list` / `kvm_workflow_inspect` — list or inspect redacted named workflow revisions (read-only).
 - `kvm_workflow_execute` — resolve a named revision, bind its target, and execute it.
 

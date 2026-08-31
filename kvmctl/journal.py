@@ -57,6 +57,12 @@ def _safe(value: Any, *, depth: int = 0) -> Any:
     return f"<{type(value).__name__}>"
 
 
+def _add_note(exc: BaseException, note: str) -> None:
+    """Attach diagnostic context on runtimes that support BaseException.add_note."""
+    add_note = getattr(exc, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+
 def _cleanup(action, label: str, errors: list[tuple[str, BaseException]]) -> None:
     """Attempt cleanup and defer reporting until every cleanup action ran."""
     try:
@@ -127,9 +133,9 @@ class Journal:
                                 try:
                                     os.fsync(fd)
                                 except BaseException as rollback_error:
-                                    original.add_note(f"journal rollback fsync failed: {rollback_error!r}")
+                                    _add_note(original, f"journal rollback fsync failed: {rollback_error!r}")
                             except BaseException as rollback_error:
-                                original.add_note(f"journal rollback failed: {rollback_error!r}")
+                                _add_note(original, f"journal rollback failed: {rollback_error!r}")
                             raise
                     finally:
                         if fd is not None:
@@ -149,7 +155,7 @@ class Journal:
                     label, cleanup_error = cleanup_errors[0]
                     if primary is None:
                         raise cleanup_error
-                    primary.add_note(f"journal cleanup {label} failed: {cleanup_error!r}")
+                    _add_note(primary, f"journal cleanup {label} failed: {cleanup_error!r}")
 
     def checkpoint(self, *, operation: str, target: str | None,
                    transition: str, **details: Any) -> None:

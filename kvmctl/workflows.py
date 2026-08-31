@@ -122,6 +122,8 @@ class WorkflowDefinition:
         for action in actions:
             if action.get("type") == "text":
                 action["value"] = "[REDACTED]"
+            elif action.get("type") == "assert_screen":
+                action["contains"] = "[REDACTED]"
         return {
             "name": self.name,
             "revision": self.revision,
