@@ -162,6 +162,8 @@ kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json --yes 
 
 The approval token is opaque, single-use, expiry-bound, and bound to the exact workflow revision, target, session, endpoint, and canonical plan hash. Keep it out of logs. Inline sequences use the same `sequence-plan`, `sequence-authorize`, then `sequence-execute --approval-token ...` lifecycle.
 
+The CLI persists only a MAC-authenticated, verified selection record for up to one hour. Override its location with `KVMCTL_SESSION_FILE` (default `~/.cache/kvmctl/session.json`). Persistence is a convenience, not proof of live device state: execution still rechecks the verified target/session at the side-effect boundary.
+
 Install the optional MCP adapter with `.venv/bin/pip install -e '.[mcp]'`, then configure an MCP client to launch `kvmctl-mcp`. It uses `KVMCTL_URL` and `KVMCTL_TOKEN` (or the optional login variables), is read-only by default, and returns snapshots as native MCP image content. Writes require `KVMCTL_WRITE_ENABLED=1` plus each operation's transport and policy requirements. See [`docs/MCP.md`](docs/MCP.md).
 
 ## Target-bound sequences and named workflows
