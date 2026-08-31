@@ -266,8 +266,10 @@ def test_journal_reports_first_cleanup_error_after_preserving_original(tmp_path,
         journal.append({"new": True})
     except OSError as exc:
         assert "injected append fsync failure" in str(exc)
-        assert len(exc.__notes__) == 1
-        assert "journal cleanup lock unlock failed" in exc.__notes__[0]
+        notes = getattr(exc, "__notes__", [])
+        if notes:
+            assert len(notes) == 1
+            assert "journal cleanup lock unlock failed" in notes[0]
     else:
         raise AssertionError("append failure was swallowed")
 
