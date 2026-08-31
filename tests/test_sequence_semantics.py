@@ -157,6 +157,17 @@ def test_workflow_list_and_inspect_are_read_only():
     assert inspected["evidence"]["workflow"]["name"] == "hello"
 
 
+def test_workflow_inspect_revision_does_not_require_target():
+    repository = WorkflowRepository.from_mappings([
+        {"name": "hello", "target": "pve1", "steps": PLAN["actions"]}
+    ])
+
+    inspected = repository.inspect("hello", repository.list()[0].revision)
+
+    assert inspected["name"] == "hello"
+    assert inspected["revision"] == repository.list()[0].revision
+
+
 def test_execution_error_is_top_level_and_redacted():
     class FailingExecutor(FakeExecutor):
         def execute(self, authorization, **kwargs):

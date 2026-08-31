@@ -151,6 +151,6 @@ KVM sequence keyboard actions are HID events delivered to the selected machine. 
 
 ## Verification record
 
-- Full repository suite: **256 passed, 3 skipped**.
+- Full repository suite (verified 2026-08-31): **385 passed, 3 skipped**.
 - Live reusable CLI selection: **pve2 selected and verified**; visible evidence showed `https://192.168.42.4:8006/` and `pve2 login:`.
 - The device-specific port mapping and protocol timings are recorded in [`../PROBE_NOTES.md`](../PROBE_NOTES.md).

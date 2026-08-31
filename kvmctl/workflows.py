@@ -216,7 +216,11 @@ class WorkflowRepository:
         if definition is None:
             raise _fail("unknown workflow")
         if revision is not None:
-            self.resolve(name, revision, target)
+            if target is None:
+                if revision != definition.revision:
+                    raise _fail("workflow revision mismatch")
+            else:
+                self.resolve(name, revision, target)
         elif target is not None:
             if definition.target_independent:
                 self.resolve(name, definition.revision, target)
