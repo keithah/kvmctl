@@ -176,19 +176,25 @@ def test_journal_attempts_parent_close_after_lock_close_failure(tmp_path, monkey
     parent_attempted = False
 
     def capture_lock_fd(file, *args, **kwargs):
-        nonlocal lock_fd, parent_fd
+        nonlocal lock_fd
         fd = real_open(file, *args, **kwargs)
         if str(file).endswith(".lock"):
             lock_fd = fd
-        elif str(file) == str(path.parent):
-            parent_fd = fd
         return fd
 
     def fail_lock_close(fd):
         nonlocal parent_attempted
-        close_calls.append(fd)
-        if fd == parent_fd:
-            parent_attempted = True
+        # Record cleanup attempts by role, not by descriptor number: the
+        # directory walk in _open_secure_dir closes intermediate descriptors
+        # whose numbers are reused, so a raw fd list cannot be ordered.
+        if parent_fd is not None:
+            if fd == lock_fd:
+                close_calls.append("lock")
+            elif fd == parent_fd:
+                close_calls.append("parent")
+                parent_attempted = True
+            else:
+                close_calls.append("other")
         if fd == lock_fd:
             raise OSError("injected lock close failure")
         return real_close(fd)
@@ -212,9 +218,9 @@ def test_journal_attempts_parent_close_after_lock_close_failure(tmp_path, monkey
     assert lock_fd is not None
     assert parent_fd is not None
     assert parent_attempted
-    assert lock_fd in close_calls
-    assert parent_fd in close_calls
-    assert close_calls.index(lock_fd) < close_calls.index(parent_fd)
+    assert "lock" in close_calls
+    assert "parent" in close_calls
+    assert close_calls.index("lock") < close_calls.index("parent")
 
 
 def test_journal_reports_first_cleanup_error_after_preserving_original(tmp_path, monkeypatch):

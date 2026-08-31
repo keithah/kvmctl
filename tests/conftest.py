@@ -42,6 +42,22 @@ except ImportError:  # pragma: no cover
     raise
 
 
+@pytest.fixture(autouse=True)
+def isolated_kvmctl_paths(tmp_path_factory, monkeypatch):
+    """Bind every kvmctl persistence path to a private per-test directory.
+
+    Defaults live under the invoking user's cache; leaving them unset would
+    make the suite depend on the host's HOME, umask, and leftover state.
+    Tests that set these variables themselves still win, because their
+    ``monkeypatch.setenv`` runs after this fixture.
+    """
+    root = tmp_path_factory.mktemp("kvmctl-env")
+    monkeypatch.setenv("KVMCTL_JOURNAL_FILE", str(root / "journal.jsonl"))
+    monkeypatch.setenv("KVMCTL_AUTH_FILE", str(root / "authorization.json"))
+    monkeypatch.setenv("KVMCTL_SESSION_FILE", str(root / "session.json"))
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(root / "locks"))
+
+
 @pytest.fixture
 def fake():
     return FakeKvmd()

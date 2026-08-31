@@ -178,7 +178,7 @@ kvmctl --url "$KVM_URL" --yes sequence-execute --plan ./plan.json --ttl 30 --app
 
 For repeatable operations, use the named workflow commands `workflow-list`, `workflow-inspect NAME [--revision REVISION] [--target TARGET]`, and `workflow-execute NAME --revision REVISION [--target TARGET]`. Workflow revisions are derived from the canonical name, target binding, and plan; callers must supply the current revision. Workflows are listed in deterministic name order and inspection redacts secret-like text. Target-independent workflows still require an explicit invocation target and are bound to it before execution.
 
-The executor aborts on every unexpected state and records bounded, deterministic journal checkpoints. Keyboard actions send KVM HID input to the selected target. `exec-command` is different: it runs an explicitly allowlisted SSH `exec-command` transport and never types a shell command through the KVM keyboard. All execution paths release held keys, close an owned stream, release the device lock, and report cleanup failures.
+The executor aborts on every unexpected state and records bounded, deterministic journal checkpoints. When no journal is supplied, checkpoints go to the mode-600 `KVMCTL_JOURNAL_FILE` path (default `~/.cache/kvmctl/semantic-journal.jsonl`), a private per-user location rather than a shared temporary directory. Keyboard actions send KVM HID input to the selected target. `exec-command` is different: it runs an explicitly allowlisted SSH `exec-command` transport and never types a shell command through the KVM keyboard. All execution paths release held keys, close an owned stream, release the device lock, and report cleanup failures.
 
 ## Development
 

@@ -161,19 +161,21 @@ def test_timeout_keeps_active_screen_worker_without_replacement(tmp_path):
     class BlockingClient(SlowClient):
         def snapshot_jpeg(self):
             started.set()
-            release.wait(1)
+            release.wait(30)
             return b"frame"
 
     device_id = "screen-timeout"
+    # A frozen clock keeps every pre-dispatch deadline check independent of
+    # host speed; only the bounded future wait can time out.
     ex = SequenceExecutor(BlockingClient(), ready_session(), Journal(tmp_path / "j"),
-                          device_id=device_id)
-    planned = ex.plan({"target": "pve2", "max_duration_ms": 1,
+                          clock=lambda: 0.0, device_id=device_id)
+    planned = ex.plan({"target": "pve2", "max_duration_ms": 50,
                        "actions": [{"type": "assert_screen", "contains": "x"}]})
     auth = ex.authorize(planned, approved=True)
 
     result = ex.execute(auth.token)
 
-    assert started.is_set()
+    assert started.wait(30)
     assert result.ok is False
     worker, future = sequence_executor._SCREEN_RESOURCES[device_id]
     assert not future.done()

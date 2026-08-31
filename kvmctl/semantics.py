@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import math
 import os
-import tempfile
 from dataclasses import replace
 import time
 from typing import Callable, Optional, Sequence
@@ -34,6 +33,16 @@ from kvmctl.journal import Journal
 from kvmctl.sequences import validate_plan, plan_hash
 from kvmctl.sequence_executor import SequenceExecutor, SequencePlanRecord
 from kvmctl.workflows import WorkflowRepository, list_workflows, inspect_workflow, resolve_workflow
+
+
+def _default_journal_path() -> str:
+    """Default journal location: a private, per-user cache path.
+
+    A shared world-writable temporary directory cannot host a 0600 journal
+    owned by this user on every host (another account may already own the
+    fixed name), so the default matches the other kvmctl persistence paths.
+    """
+    return os.environ.get("KVMCTL_JOURNAL_FILE", "~/.cache/kvmctl/semantic-journal.jsonl")
 
 
 def _evidence(operation: str, transport: str, read_only: bool,
@@ -74,7 +83,7 @@ class SemanticSurface:
         self.host = HostAdapter(host_runner, profile=host_profile) if host_runner is not None else None
         self.workflow_repository = workflow_repository or WorkflowRepository(())
         if journal is None:
-            journal = Journal(os.path.join(tempfile.gettempdir(), "kvmctl-semantic-journal.jsonl"))
+            journal = Journal(_default_journal_path())
         self.journal = journal
         self.sequence_executor = sequence_executor or SequenceExecutor(
             client, self.session, journal, authorization_store=authorization_store)
