@@ -127,8 +127,30 @@ The CLI now provides `send-text`, `send-keys`, `hold-key`, `release-all`, `mouse
 - Use `ControlRight`, never `ControlLeft`, for the TH41-3 protocol.
 - Unknown or disabled machine names must not generate HID traffic.
 
+## Target-bound sequence operations
+
+Use the same three-stage safety boundary for every declarative sequence: plan it, explicitly authorize it, then execute it only after the target is selected and visually verified.
+
+```sh
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure sequence-plan --plan ./plan.json
+AUTHORIZATION_JSON=$(kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes sequence-authorize --plan ./plan.json --ttl 30)
+APPROVAL_TOKEN=$(printf '%s' "$AUTHORIZATION_JSON" | jq -r '.evidence.approval_token')
+kvmctl --url "$KVM_URL" --host "$KVM_HOST" --user "$KVM_USER" --password "$KVM_PASSWORD" \
+  --insecure --yes sequence-execute --plan ./plan.json --ttl 30 \
+  --approval-token "$APPROVAL_TOKEN"
+```
+
+Named workflow definitions can be loaded for standalone CLI use with `--workflows FILE` or `KVMCTL_WORKFLOWS_FILE`. The file is JSON containing either a list of definitions or `{ "workflows": [...] }`; definitions are immutable and declarative. Run `workflow-list` and `workflow-inspect` first, then `--yes workflow-authorize NAME --revision REVISION`, and finally `--yes workflow-execute NAME --revision REVISION --approval-token TOKEN`. Repeat the file and revision on each invocation. Tokens are opaque, single-use capabilities bound to the exact canonical plan hash, target, endpoint, verified session, and expiry; do not log them.
+
+
+The executor aborts on a target/session mismatch, changed plan hash, expired authorization, deadline, or unexpected state. A lock-conflict rejection occurs before this invocation owns the device lock or any keys, so it records the abort and returns without performing ownership cleanup; all paths after lock ownership release keys, close streams they own, and release the device lock. Check `ok`, `completed_steps`, `cleanup_ok`, and `cleanup_errors` in the JSON result before retrying. Do not put passwords, tokens, cookies, authorization headers, or secrets in plans, logs, or screenshots; journal, result, and inspection output is redacted.
+
+KVM sequence keyboard actions are HID events delivered to the selected machine. `exec-command` is not a keyboard shortcut: it is a separate SSH operation restricted to the configured base-command allowlist, explicit `transport=ssh`, and write authorization. Never use it as a way to bypass the KVM target boundary.
+
 ## Verification record
 
-- Full repository suite: **142 passed, 3 skipped**.
+- Full repository suite (verified 2026-08-31): **385 passed, 3 skipped**.
 - Live reusable CLI selection: **pve2 selected and verified**; visible evidence showed `https://192.168.42.4:8006/` and `pve2 login:`.
 - The device-specific port mapping and protocol timings are recorded in [`../PROBE_NOTES.md`](../PROBE_NOTES.md).

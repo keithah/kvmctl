@@ -9,13 +9,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import inspect
 from typing import Callable, Optional
 
-from kvmctl.client import KvmClient
+from kvmctl.client import KvmClient, effective_endpoint_identity
 from kvmctl.machines import SessionState
 from kvmctl.policy import PolicyError
 from kvmctl.semantics import SemanticSurface
+from kvmctl.results import normalize_error, operation_result
 from kvmctl.host import ArgvRunner
+from kvmctl.session_store import load_session, save_session, FileAuthorizationStore
+from kvmctl.workflows import WorkflowRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ca-bundle", default=None)
     p.add_argument("--yes", action="store_true",
                    help="authorize state-changing operations (required gate)")
+    p.add_argument("--workflows", default=None,
+                   help="JSON declarative workflow file (or KVMCTL_WORKFLOWS_FILE)")
     p.add_argument("--transport", choices=("kvm", "ssh"), default=None,
                    help="explicit transport; required for select/exec-command")
     sub = p.add_subparsers(dest="command", required=True)
@@ -95,10 +101,86 @@ def build_parser() -> argparse.ArgumentParser:
 
     ex = sub.add_parser("exec-command")
     ex.add_argument("cmd")
+
+    def plan_command(name, *, write=False):
+        cmd = sub.add_parser(name)
+        cmd.add_argument("--plan", required=name != "sequence-execute",
+                         help="JSON plan text, path to a JSON file, or - for stdin")
+        cmd.add_argument("--ttl", type=float, default=30.0)
+        cmd.add_argument("--out", default=None, help="also write the result JSON to this path")
+        cmd.add_argument("--approval-token", default=None, help=argparse.SUPPRESS)
+        cmd.set_defaults(sequence_write=write)
+        return cmd
+
+    plan_command("sequence-plan")
+    plan_command("sequence-authorize", write=True)
+    plan_command("sequence-execute", write=True)
+    sub.add_parser("workflow-list")
+    wa = sub.add_parser("workflow-authorize")
+    wa.add_argument("name"); wa.add_argument("--revision", required=True); wa.add_argument("--target", default=None); wa.add_argument("--ttl", type=float, default=30.0)
+    wi = sub.add_parser("workflow-inspect")
+    wi.add_argument("name")
+    wi.add_argument("--revision", default=None)
+    wi.add_argument("--target", default=None)
+    we = sub.add_parser("workflow-execute")
+    we.add_argument("name")
+    we.add_argument("--revision", required=True)
+    we.add_argument("--target", default=None)
+    we.add_argument("--ttl", type=float, default=30.0)
+    we.add_argument("--approval-token", default=None, help=argparse.SUPPRESS)
     return p
 
 
+def _read_plan(source: str):
+    """Read plan JSON without echoing or logging its contents."""
+    if source == "-":
+        raw = sys.stdin.read()
+    else:
+        try:
+            with open(source, encoding="utf-8") as fh:
+                raw = fh.read()
+        except (OSError, UnicodeError):
+            raw = source
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("plan must be a JSON object")
+    return value
+
+
+def _sequence_operation(command: str) -> str:
+    return {"sequence-plan": "kvm_sequence_plan",
+            "sequence-authorize": "kvm_sequence_authorize",
+            "sequence-execute": "kvm_sequence_execute",
+            "workflow-list": "kvm_workflow_list", "workflow-authorize": "kvm_workflow_authorize",
+            "workflow-inspect": "kvm_workflow_inspect",
+            "workflow-execute": "kvm_workflow_execute"}[command]
+
+
+def _sequence_error(command: str, exc: BaseException) -> dict:
+    operation = _sequence_operation(command)
+    return operation_result(operation=operation, transport="kvm",
+                            read_only=command in {"sequence-plan", "workflow-list", "workflow-inspect"},
+                            ok=False, state="aborted", error={"code": normalize_error(exc) or "operation failed"})
+
+
+def _call_sequence(surface, method: str, *args, **kwargs):
+    """Call adapters that predate token kwargs without weakening real surface."""
+    fn = getattr(surface, method)
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD
+                         for p in parameters.values())
+    if kwargs.get("approval_token") and "approval_token" not in parameters and not accepts_kwargs:
+        raise TypeError("adapter does not support approval_token")
+    filtered = {key: value for key, value in kwargs.items()
+                if key in parameters or accepts_kwargs}
+    return fn(*args, **filtered)
+
+
 def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
+         session: Optional[SessionState] = None,
          sleep: Optional[Callable[[float], None]] = None,
          host_runner: Optional[ArgvRunner] = None) -> int:
     args = build_parser().parse_args(argv)
@@ -121,7 +203,17 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             print(json.dumps({"ok": False, "error": "provide --token/KVMCTL_TOKEN or --user+--password/KVMCTL_USER+KVMCTL_PASSWORD"}))
             return 2
 
-    surf = SemanticSurface(client, session=SessionState(), host_runner=host_runner)
+    endpoint = effective_endpoint_identity(
+        getattr(client, "base_url", args.url), getattr(client, "host", args.host))
+    loaded_session = session or load_session(__import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=endpoint)
+    try:
+        workflow_path = args.workflows or __import__('os').environ.get('KVMCTL_WORKFLOWS_FILE')
+        repository = WorkflowRepository.from_file(workflow_path) if workflow_path else WorkflowRepository(())
+        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner,
+                               workflow_repository=repository,
+                               authorization_store=FileAuthorizationStore(__import__('os').environ.get('KVMCTL_AUTH_FILE', '~/.cache/kvmctl/authorization.json')))
+    except TypeError:
+        surf = SemanticSurface(client, session=loaded_session, host_runner=host_runner)
     surf.write_enabled = args.yes
     sleep = sleep or _real_sleep
 
@@ -208,17 +300,83 @@ def main(argv: Optional[list] = None, *, client: Optional[KvmClient] = None,
             need_write()
             need_transport("exec-command")
             out = surf.exec_command(args.cmd, transport=args.transport)
+        elif args.command in {"sequence-plan", "sequence-authorize", "sequence-execute"}:
+            if args.sequence_write:
+                need_write()
+            plan = _read_plan(args.plan) if args.plan else None
+            approved = bool(args.yes or args.approval_token)
+            if args.command == "sequence-plan":
+                out = surf.kvm_sequence_plan(plan)
+            elif args.command == "sequence-authorize":
+                out = surf.kvm_sequence_authorize(plan, approved=approved, ttl_s=args.ttl)
+            else:
+                out = _call_sequence(surf, "kvm_sequence_execute", plan,
+                                     approval_token=args.approval_token, approved=approved, ttl_s=args.ttl)
+        elif args.command == "workflow-authorize":
+            need_write(); out = _call_sequence(surf, "kvm_workflow_authorize", args.name, args.revision, approved=True, target=args.target, ttl_s=args.ttl)
+        elif args.command == "workflow-list":
+            out = surf.kvm_workflow_list()
+        elif args.command == "workflow-inspect":
+            out = surf.kvm_workflow_inspect(args.name, args.revision, args.target)
+        elif args.command == "workflow-execute":
+            need_write()
+            out = _call_sequence(surf, "kvm_workflow_execute",
+                args.name, args.revision, approved=bool(args.yes and not args.approval_token),
+                approval_token=args.approval_token, target=args.target, ttl_s=args.ttl)
         else:  # pragma: no cover
             raise SystemExit(f"unknown command {args.command!r}")
     except PolicyError as exc:
-        print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
-        return 3
+        if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                             "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+            try:
+                surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
+            except Exception:
+                pass
+            out = _sequence_error(args.command, exc)
+        else:
+            print(json.dumps({"ok": False, "error": f"policy refused: {exc}"}))
+            return 3
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                             "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+            try:
+                surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
+            except Exception:
+                pass
+            out = _sequence_error(args.command, exc)
+        else:
+            raise
     except SystemExit as exc:
         if isinstance(exc.code, str):
+            if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                                 "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+                try:
+                    surf.sequence_executor.reject(exc.code, target=getattr(args, "target", None))
+                except Exception:
+                    pass
             print(exc.code, file=sys.stderr)
             raise SystemExit(2)
         raise
-    print(json.dumps(out))
+    if session is None and hasattr(surf, "session"):
+        save_session(surf.session, __import__('os').environ.get('KVMCTL_SESSION_FILE', '~/.cache/kvmctl/session.json'), endpoint=endpoint)
+    rendered = json.dumps(out)
+    if getattr(args, "out", None) and args.command != "snapshot":
+        try:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(rendered)
+                fh.write("\n")
+        except OSError as exc:
+            if args.command in {"sequence-plan", "sequence-authorize", "sequence-execute",
+                                 "workflow-list", "workflow-authorize", "workflow-inspect", "workflow-execute"}:
+                try:
+                    surf.sequence_executor.reject(normalize_error(exc) or "operation rejected", target=getattr(args, "target", None))
+                except Exception:
+                    pass
+                out = _sequence_error(args.command, exc)
+                rendered = json.dumps(out)
+            else:
+                raise
+    print(rendered)
     return 0 if out.get("ok", True) else 1
 
 

@@ -7,13 +7,78 @@ GLKVM (KVMD 4.82): URL-encoded form login, lowercase ``token`` header auth,
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import re
 import ssl
 import threading
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
 REDACTED = "***"
+
+
+def _canonical_http_authority(value: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("HTTP Host identity is ambiguous")
+    if any(ord(c) <= 32 or c in "\\\"#%/?@\\\\" for c in value):
+        raise ValueError("HTTP Host identity is ambiguous")
+    if value.startswith("["):
+        close = value.find("]")
+        if close < 0 or value.count("[") != 1 or value.count("]") != 1:
+            raise ValueError("HTTP Host identity is ambiguous")
+        try:
+            ipaddress.IPv6Address(value[1:close])
+        except ValueError as exc:
+            raise ValueError("HTTP Host identity has invalid IPv6") from exc
+        suffix = value[close + 1:]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            raise ValueError("HTTP Host identity is ambiguous")
+        if suffix and not 0 < int(suffix[1:]) <= 65535:
+            raise ValueError("HTTP Host identity has an invalid port")
+        return value[:close + 1].lower() + (f":{int(suffix[1:])}" if suffix else "")
+    if ":" in value:
+        name, port = value.rsplit(":", 1)
+        if not name or not port.isdigit() or not 0 < int(port) <= 65535:
+            raise ValueError("HTTP Host identity has an invalid port")
+        value = name + ":" + str(int(port))
+    raw_name = value.rsplit(":", 1)[0] if ":" in value else value
+    suffix = value[len(raw_name):]
+    name = raw_name
+    if name.endswith("."):
+        name = name[:-1]
+    try:
+        ipaddress.IPv4Address(name)
+    except ValueError:
+        if re.fullmatch(r"[0-9.]+", name):
+            raise ValueError("HTTP Host identity has invalid IPv4")
+        if len(name) > 253 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*", name):
+            raise ValueError("HTTP Host identity has invalid hostname")
+    return name.lower().rstrip(".") + suffix
+
+
+def effective_endpoint_identity(base_url: str, host: Optional[str] = None) -> str:
+    """Return the canonical identity used to bind sessions and capabilities."""
+    if not isinstance(base_url, str) or not base_url:
+        raise ValueError("endpoint URL is required")
+    try:
+        parsed = urlsplit(base_url)
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname
+        if scheme not in {"http", "https"} or not hostname:
+            raise ValueError("endpoint URL must include an http(s) host")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("endpoint URL must not contain credentials")
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError as exc:
+        raise ValueError("endpoint URL has an invalid authority") from exc
+    network_host = hostname.lower().rstrip(".")
+    if ":" in network_host:
+        ipaddress.IPv6Address(network_host)
+        network_host = f"[{network_host}]"
+    configured_host = _canonical_http_authority(host if host is not None else network_host)
+    return f"{scheme}://{network_host}:{port}|host={configured_host}"
 
 
 class KvmClient:
@@ -45,6 +110,9 @@ class KvmClient:
         self.host = host
         self._stream = None
         self._held_keys: set[str] = set()
+
+    def endpoint_identity(self) -> str:
+        return effective_endpoint_identity(self.base_url, self.host)
 
     # -- plumbing ---------------------------------------------------------
 

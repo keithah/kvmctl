@@ -1,0 +1,263 @@
+import json
+import stat
+import threading
+import pytest
+from kvmctl.journal import Journal
+from kvmctl.session_store import FileAuthorizationStore, load_session, save_session
+from kvmctl.session_store import _atomic_write
+from kvmctl.client import effective_endpoint_identity
+from kvmctl.machines import device_lock
+from kvmctl.sequence_executor import SequenceExecutor
+from kvmctl.results import normalize_error, operation_result
+from test_sequence_executor import FakeClient, ready_session
+
+
+def test_persisted_authorization_is_bound_to_verified_context_and_single_use(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    session = ready_session()
+    c1 = FakeClient(); c1.base_url = 'https://one.test'
+    c2 = FakeClient(); c2.base_url = 'https://two.test'
+    e1 = SequenceExecutor(c1, session, Journal(tmp_path/'j1'), authorization_store=store)
+    plan = e1.plan({'target':'pve2','actions':[{'type':'release_all'}]})
+    auth = e1.authorize(plan, approved=True)
+    e2 = SequenceExecutor(c2, ready_session(), Journal(tmp_path/'j2'), authorization_store=store)
+    assert e2.execute(auth.token).error == 'authorization invalid'
+    assert e1.execute(auth.token).ok
+    assert e1.execute(auth.token).error == 'authorization used'
+
+
+def test_same_url_different_http_host_rejects_persisted_authorization(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    c1 = FakeClient(); c1.base_url = c2_url = 'https://shared.test:8443/api'; c1.host = 'kvm-a.example'
+    c2 = FakeClient(); c2.base_url = c2_url; c2.host = 'kvm-b.example'
+    e1 = SequenceExecutor(c1, ready_session(), Journal(tmp_path/'j1'), authorization_store=store)
+    auth = e1.authorize(e1.plan({'target':'pve2','actions':[{'type':'release_all'}]}), approved=True)
+    e2 = SequenceExecutor(c2, ready_session(), Journal(tmp_path/'j2'), authorization_store=store)
+    assert e2.execute(auth.token).error == 'authorization invalid'
+    assert e1.execute(auth.token).ok
+
+
+def test_same_url_matching_http_host_accepts_persisted_authorization(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    c1 = FakeClient(); c1.base_url = 'https://shared.test:8443/api'; c1.host = 'kvm.example'
+    c2 = FakeClient(); c2.base_url = c1.base_url; c2.host = 'kvm.example'
+    e1 = SequenceExecutor(c1, ready_session(), Journal(tmp_path/'j1'), authorization_store=store)
+    auth = e1.authorize(e1.plan({'target':'pve2','actions':[{'type':'release_all'}]}), approved=True)
+    e2 = SequenceExecutor(c2, ready_session(), Journal(tmp_path/'j2'), authorization_store=store)
+    assert e2.execute(auth.token).ok
+
+
+def test_session_persistence_binds_effective_http_host(tmp_path):
+    path = str(tmp_path / 'session.json')
+    session = ready_session()
+    save_session(session, path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example'))
+    assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-a.example')).current is not None
+    assert load_session(path, endpoint=effective_endpoint_identity('https://shared.test:8443/api', 'kvm-b.example')).current is None
+
+
+@pytest.mark.parametrize("host", ["kvm.example", "192.0.2.10:8443", "[2001:db8::10]:8443", "[::1]"])
+def test_effective_endpoint_identity_accepts_valid_http_authorities(host):
+    identity = effective_endpoint_identity("https://shared.test:443/api", host)
+    assert identity.endswith("|host=" + host.lower())
+
+
+@pytest.mark.parametrize("host", ["example.com@evil", "foo bar", "[::1]:99999", "[::1", "::1", "example.com:", ":8080", "[]", "example.com/path", "example..com"])
+def test_effective_endpoint_identity_rejects_invalid_http_authorities(host):
+    with pytest.raises(ValueError):
+        effective_endpoint_identity("https://shared.test:443/api", host)
+
+
+def test_effective_endpoint_identity_canonicalizes_and_rejects_ambiguous_numeric_hosts():
+    assert effective_endpoint_identity("https://shared.test", "Example.COM:00080").endswith("|host=example.com:80")
+    with pytest.raises(ValueError):
+        effective_endpoint_identity("https://shared.test", "192.168.001.1")
+
+
+def test_persistence_rejects_symlinked_parent_and_lock(tmp_path):
+    real = tmp_path / "real"; real.mkdir()
+    parent_link = tmp_path / "parent-link"; parent_link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(parent_link / "session.json"), endpoint="https://x:443|host=x")
+    store = FileAuthorizationStore(str(tmp_path / "auth.json"))
+    (tmp_path / "auth.json.lock").symlink_to(real / "outside.lock")
+    with pytest.raises(PermissionError):
+        with store._locked():
+            pass
+
+
+def test_journal_requires_private_regular_file_and_rejects_symlinked_parent(tmp_path):
+    from kvmctl.journal import Journal
+
+    path = tmp_path / "nested" / "journal.jsonl"
+    Journal(path).append({"ok": True})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    path.chmod(0o644)
+    with pytest.raises(PermissionError):
+        Journal(path).append({"ok": False})
+
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        Journal(linked / "journal.jsonl").append({"ok": False})
+
+
+def test_journal_preserves_append_error_and_attempts_all_cleanup(monkeypatch, tmp_path):
+    import fcntl
+    import kvmctl.journal as journal_module
+
+    close_calls = []
+    unlock_calls = []
+    close_count_at_write = None
+    fail_closes = False
+    real_flock = fcntl.flock
+
+    def close(fd):
+        close_calls.append(fd)
+        if fail_closes:
+            raise RuntimeError("cleanup close failed")
+
+    def flock(fd, operation):
+        if operation == fcntl.LOCK_UN:
+            unlock_calls.append(fd)
+            raise RuntimeError("cleanup unlock failed")
+        return real_flock(fd, operation)
+
+    def write(fd, data):
+        nonlocal close_count_at_write, fail_closes
+        close_count_at_write = len(close_calls)
+        fail_closes = True
+        raise OSError("append failed")
+
+    monkeypatch.setattr(journal_module.os, "close", close)
+    monkeypatch.setattr(journal_module.fcntl, "flock", flock)
+    monkeypatch.setattr(journal_module.os, "write", write)
+
+    with pytest.raises(OSError, match="append failed"):
+        Journal(tmp_path / "journal.jsonl").append({"ok": True})
+
+    assert close_count_at_write is not None
+    assert len(close_calls) - close_count_at_write == 3
+    assert len(unlock_calls) == 1
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
+def test_session_persistence_requires_exact_0600_files(tmp_path, mode):
+    path = tmp_path / "session.json"
+    save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+    key = path.with_name("session.json.key")
+    path.chmod(mode)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+    path.chmod(0o600)
+    key.chmod(mode)
+    with pytest.raises(PermissionError):
+        save_session(ready_session(), str(path), endpoint="https://x:443|host=x")
+
+
+@pytest.mark.parametrize("mode", [0o400, 0o000, 0o500])
+def test_authorization_persistence_requires_exact_0600_files(tmp_path, mode):
+    store = FileAuthorizationStore(str(tmp_path / "auth.json"))
+    executor = SequenceExecutor(FakeClient(), ready_session(), Journal(tmp_path / "j"),
+                                authorization_store=store)
+    auth = executor.authorize(executor.plan({"target": "pve2", "actions": [{"type": "release_all"}]}), approved=True)
+    key = tmp_path / "auth.json.key"
+    key.chmod(mode)
+    with pytest.raises(PermissionError):
+        store.put(auth)
+    key.chmod(0o600)
+    (tmp_path / "auth.json").chmod(mode)
+    with pytest.raises(PermissionError):
+        store.put(auth)
+
+
+def test_atomic_write_uses_original_parent_if_path_is_replaced(tmp_path, monkeypatch):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original_replace = __import__("os").replace
+    swapped = False
+
+    def replace(src, dst, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            moved = tmp_path / "moved"
+            parent.rename(moved)
+            parent.symlink_to(outside, target_is_directory=True)
+        return original_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr("kvmctl.session_store.os.replace", replace)
+    _atomic_write(parent / "state.json", "secret")
+    assert (tmp_path / "moved" / "state.json").read_text() == "secret"
+    assert not (outside / "state.json").exists()
+
+
+def test_device_lock_rejects_symlinked_lock_file(tmp_path, monkeypatch):
+    lock_dir = tmp_path / "locks"; lock_dir.mkdir()
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(lock_dir))
+    import hashlib
+    name = hashlib.sha256(b"symlinked").hexdigest() + ".lock"
+    (lock_dir / name).symlink_to(tmp_path / "outside.lock")
+    assert not device_lock("symlinked").acquire(blocking=False)
+
+
+def test_device_lock_rejects_symlinked_parent_directory(tmp_path, monkeypatch):
+    real = tmp_path / "real"; real.mkdir()
+    linked = tmp_path / "locks"; linked.symlink_to(real, target_is_directory=True)
+    monkeypatch.setenv("KVMCTL_LOCK_DIR", str(linked))
+    with pytest.raises(PermissionError):
+        device_lock("parent-link")
+
+
+def test_persisted_authorization_take_is_process_safe(tmp_path):
+    store = FileAuthorizationStore(str(tmp_path / 'auth.json'))
+    e = SequenceExecutor(FakeClient(), ready_session(), Journal(tmp_path/'j'), authorization_store=store)
+    auth = e.authorize(e.plan({'target':'pve2','actions':[{'type':'release_all'}]}), approved=True)
+    results=[]
+    threads=[threading.Thread(target=lambda: results.append(store.take(auth.token))) for _ in range(2)]
+    for t in threads:t.start()
+    for t in threads:t.join()
+    assert sum(x is not None for x in results) == 1
+
+
+def test_screen_assertion_timeout_and_oversize_stop_hid(tmp_path):
+    class Slow(FakeClient):
+        base_url='https://screen.test'
+        def snapshot_jpeg(self): raise TimeoutError('slow')
+    e=SequenceExecutor(Slow(), ready_session(), Journal(tmp_path/'j'), clock=lambda:0.0, sleep=lambda _:None)
+    p=e.plan({'target':'pve2','actions':[{'type':'assert_screen','contains':'ok'},{'type':'key','value':'Enter'}], 'max_duration_ms':100})
+    r=e.execute(e.authorize(p, approved=True).token)
+    assert not r.ok and 'screen' in r.error
+
+
+def test_rejection_paths_journal_exact_binding(tmp_path):
+    e=SequenceExecutor(FakeClient(), ready_session(), Journal(tmp_path/'j'), clock=lambda:0.0, sleep=lambda _:None)
+    p=e.plan({'target':'pve2','actions':[{'type':'release_all'}]})
+    a=e.authorize(p, approved=True)
+    assert e.execute(a.token, expected_plan={'target':'pve2','actions':[{'type':'wait','duration_ms':1}]}).error == 'plan mismatch'
+    rows=[json.loads(x) for x in (tmp_path/'j').read_text().splitlines()]
+    assert rows[-1]['transition']=='aborted'
+    assert rows[-1]['target']=='pve2' and rows[-1]['plan_hash']==a.plan_hash
+    assert 'timestamp' in rows[-1] and 'duration_ms' in rows[-1] and 'target_verification' in rows[-1]
+
+
+def test_error_normalization_redacts_exception_and_nested_sensitive_values(tmp_path):
+    secret = "backend-password=do-not-leak"
+    assert secret not in normalize_error(ValueError(secret))
+    result = operation_result(
+        operation="sequence", transport="kvm", read_only=False, ok=False,
+        error={"code": secret, "message": secret,
+               "nested": {"password": secret, "safe": "visible"}},
+    )
+    serialized = json.dumps(result)
+    assert secret not in serialized
+    assert result["error"] == {"code": "operation failed", "retryable": False,
+                                "requires_human": False}
+
+    journal = Journal(tmp_path / "redacted.jsonl")
+    e = SequenceExecutor(FakeClient(), ready_session(), journal)
+    e.reject(secret, target="pve2")
+    assert secret not in (tmp_path / "redacted.jsonl").read_text()

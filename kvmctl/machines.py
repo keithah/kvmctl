@@ -26,6 +26,12 @@ caller without an accompanying state record.
 from __future__ import annotations
 
 import time
+import threading
+import hashlib
+import os
+import pathlib
+import fcntl
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Protocol, Sequence
@@ -147,6 +153,71 @@ class SelectionRecord:
     @property
     def selected(self) -> bool:
         return self.state in (SelectionState.SELECTED_UNVERIFIED, SelectionState.VERIFIED)
+
+
+_DEVICE_LOCKS: dict[tuple[str, str], "DeviceLock"] = {}
+_DEVICE_LOCKS_GUARD = threading.Lock()
+
+
+class DeviceLock:
+    """A non-reentrant thread lock backed by a fail-closed cross-process flock."""
+    def __init__(self, device_id: str):
+        root = pathlib.Path(os.environ.get("KVMCTL_LOCK_DIR", "~/.cache/kvmctl/locks")).expanduser()
+        # Do not let mkdir -p traverse an attacker-controlled component.
+        current = pathlib.Path(root.anchor) if root.is_absolute() else pathlib.Path()
+        for part in root.parts[1:] if root.is_absolute() else root.parts:
+            current /= part
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                current.mkdir(mode=0o700)
+                info = current.lstat()
+            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                raise PermissionError(f"unsafe lock directory: {current}")
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise PermissionError(f"unsafe lock directory: {root}")
+        name = hashlib.sha256(str(device_id).encode("utf-8")).hexdigest() + ".lock"
+        self._path = root / name
+        self._local = threading.Lock()
+
+    def acquire(self, blocking=True):
+        if not self._local.acquire(blocking):
+            return False
+        try:
+            flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self._path, flags, 0o600)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+                os.close(fd)
+                raise PermissionError("unsafe device lock file")
+            self._file = os.fdopen(fd, "a+")
+            flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+            fcntl.flock(self._file.fileno(), flags)
+        except (OSError, ValueError):
+            try:
+                if getattr(self, "_file", None): self._file.close()
+            except OSError: pass
+            self._local.release()
+            return False
+        return True
+
+    def release(self):
+        try:
+            try:
+                fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._file.close()
+        finally:
+            self._local.release()
+
+
+def device_lock(device_id: str = "default") -> DeviceLock:
+    """Return a cached, cross-process mutation lock for one KVM device."""
+    root = str(pathlib.Path(os.environ.get("KVMCTL_LOCK_DIR", "~/.cache/kvmctl/locks")).expanduser())
+    key = (root, str(device_id))
+    with _DEVICE_LOCKS_GUARD:
+        return _DEVICE_LOCKS.setdefault(key, DeviceLock(str(device_id)))
 
 
 class SessionState:

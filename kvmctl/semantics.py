@@ -10,6 +10,9 @@ semantic operations below exist.
 from __future__ import annotations
 
 import base64
+import math
+import os
+from dataclasses import replace
 import time
 from typing import Callable, Optional, Sequence
 
@@ -25,7 +28,21 @@ from kvmctl.machines import (
 )
 from kvmctl.policy import PolicyError, TransportPolicy, TRANSPORTS
 from kvmctl.host import ArgvRunner, HostAdapter, HostProbeProfile, run_probe
-from kvmctl.results import operation_result
+from kvmctl.results import normalize_error, operation_result
+from kvmctl.journal import Journal
+from kvmctl.sequences import validate_plan, plan_hash
+from kvmctl.sequence_executor import SequenceExecutor, SequencePlanRecord
+from kvmctl.workflows import WorkflowRepository, list_workflows, inspect_workflow, resolve_workflow
+
+
+def _default_journal_path() -> str:
+    """Default journal location: a private, per-user cache path.
+
+    A shared world-writable temporary directory cannot host a 0600 journal
+    owned by this user on every host (another account may already own the
+    fixed name), so the default matches the other kvmctl persistence paths.
+    """
+    return os.environ.get("KVMCTL_JOURNAL_FILE", "~/.cache/kvmctl/semantic-journal.jsonl")
 
 
 def _evidence(operation: str, transport: str, read_only: bool,
@@ -52,6 +69,9 @@ class SemanticSurface:
         ssh_runner: Optional[Callable[[Sequence[str]], dict]] = None,
         host_runner: Optional[ArgvRunner] = None,
         host_profile: Optional[HostProbeProfile] = None,
+        workflow_repository: Optional[WorkflowRepository] = None,
+        sequence_executor: Optional[SequenceExecutor] = None,
+        journal: Optional[Journal] = None, authorization_store=None
     ):
         self.client = client
         self.session = session or SessionState()
@@ -61,6 +81,12 @@ class SemanticSurface:
             ssh_runner=ssh_runner,
         )
         self.host = HostAdapter(host_runner, profile=host_profile) if host_runner is not None else None
+        self.workflow_repository = workflow_repository or WorkflowRepository(())
+        if journal is None:
+            journal = Journal(_default_journal_path())
+        self.journal = journal
+        self.sequence_executor = sequence_executor or SequenceExecutor(
+            client, self.session, journal, authorization_store=authorization_store)
 
     # -- policy conveniences -------------------------------------------------
 
@@ -324,3 +350,214 @@ class SemanticSurface:
             )
         result = self.policy.run_ssh(command)
         return _evidence("exec_command", "ssh", read_only=False, **result)
+
+    # -- target-bound sequence and workflow operations -----------------------
+
+    @staticmethod
+    def _sequence_envelope(operation: str, *, read_only: bool, target=None,
+                           ok=True, state="planned", error=None, **evidence) -> dict:
+        return operation_result(operation=operation, transport="kvm",
+                                read_only=read_only, target=target, ok=ok,
+                                state=state, evidence=evidence, error=error)
+
+    def _validated_sequence_record(self, plan) -> SequencePlanRecord:
+        """Accept only canonical records produced by the executor planner."""
+        expected = None
+        if not isinstance(plan, SequencePlanRecord):
+            if isinstance(plan, dict):
+                expected = validate_plan(plan)
+                planned = self.sequence_executor.plan(expected)
+                if not isinstance(planned, SequencePlanRecord):
+                    raise TypeError("invalid sequence plan record")
+            else:
+                raise TypeError("authorization requires a validated sequence plan record")
+        else:
+            planned = plan
+        try:
+            canonical = validate_plan(planned.plan)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise TypeError("invalid sequence plan record") from exc
+        if expected is not None and canonical != expected:
+            raise ValueError("invalid sequence plan record")
+        if (planned.target != canonical.target
+                or planned.plan_hash != plan_hash(canonical)
+                or planned.action_count != len(canonical.actions)
+                or planned.max_duration_ms != canonical.max_duration_ms):
+            raise ValueError("invalid sequence plan record")
+        current = self.session.current
+        if current is None or not current.verified or current.machine != canonical.target:
+            raise ValueError("target mismatch or session not verified")
+        return planned
+
+    def _sequence_write_gate(self, operation: str, *, target=None, plan_hash_value="") -> None:
+        try:
+            self.policy.require_write(operation)
+        except PolicyError as exc:
+            reject = getattr(self.sequence_executor, "reject", None)
+            if reject is not None:
+                try:
+                    reject(normalize_error(exc) or "operation rejected", target=target, plan_hash_value=plan_hash_value)
+                except BaseException:
+                    pass
+            raise
+
+    def _sequence_reject(self, reason: str, *, target=None, plan_hash_value="") -> None:
+        reject = getattr(self.sequence_executor, "reject", None)
+        if reject is not None:
+            try:
+                reject(reason, target=target, plan_hash_value=plan_hash_value)
+            except BaseException:
+                pass
+
+    @staticmethod
+    def _validate_authorization_inputs(approved, ttl_s) -> None:
+        if type(approved) is not bool:
+            raise TypeError("approved must be a boolean")
+        if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
+                or not math.isfinite(ttl_s) or not float(ttl_s).is_integer()
+                or not 0 < ttl_s <= SequenceExecutor.MAX_AUTHORIZATION_TTL_S):
+            raise ValueError("authorization ttl must be finite, integral, and between 0 and 30 seconds")
+
+    def kvm_sequence_plan(self, plan) -> dict:
+        try:
+            planned = self.sequence_executor.plan(validate_plan(plan))
+        except (TypeError, ValueError, KeyError):
+            target = plan.get("target") if isinstance(plan, dict) and isinstance(plan.get("target"), str) else None
+            self._sequence_reject("plan validation failed", target=target)
+            raise
+        return self._sequence_envelope(
+            "kvm_sequence_plan", read_only=True, target=planned.target,
+            plan_hash=planned.plan_hash, action_count=planned.action_count,
+            max_duration_ms=planned.max_duration_ms)
+
+    def kvm_sequence_authorize(self, plan, *, approved: bool,
+                               ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
+        try:
+            canonical_input = validate_plan(plan) if isinstance(plan, dict) else None
+        except (TypeError, ValueError, KeyError):
+            target = plan.get("target") if isinstance(plan, dict) and isinstance(plan.get("target"), str) else None
+            self._sequence_reject("plan validation failed", target=target)
+            raise
+        target = canonical_input.target if canonical_input is not None else getattr(plan, "target", None)
+        exact_hash = plan_hash(canonical_input) if canonical_input is not None else getattr(plan, "plan_hash", "")
+        self._sequence_write_gate("kvm_sequence_authorize", target=target,
+                                  plan_hash_value=exact_hash)
+        try:
+            planned = self._validated_sequence_record(plan)
+        except (TypeError, ValueError, KeyError) as exc:
+            reason = "invalid sequence plan record" if isinstance(exc, TypeError) else (str(exc) or "invalid sequence plan record")
+            self._sequence_reject(reason, target=target, plan_hash_value=exact_hash)
+            raise
+        authorization = self.sequence_executor.authorize(planned, approved=approved, ttl_s=ttl_s)
+        result = self._sequence_envelope(
+            "kvm_sequence_authorize", read_only=False, target=authorization.target,
+            state="authorized", plan_hash=authorization.plan_hash, action_count=len(authorization.plan.actions), expires_at=authorization.expires_at)
+        # The token is an opaque capability, not a credential; it must be
+        # returned to the caller while never entering the journal.
+        result["evidence"]["approval_token"] = authorization.token
+        return result
+
+    def kvm_sequence_execute(self, plan=None, *, approval_token: str | None = None,
+                             approved: bool = False, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
+        try:
+            canonical_input = validate_plan(plan) if plan is not None else None
+        except (TypeError, ValueError, KeyError):
+            target = plan.get("target") if isinstance(plan, dict) and isinstance(plan.get("target"), str) else None
+            self._sequence_reject("plan validation failed", target=target)
+            raise
+        target = canonical_input.target if canonical_input is not None else None
+        self._sequence_write_gate("kvm_sequence_execute", target=target,
+                                  plan_hash_value=(plan_hash(canonical_input) if canonical_input is not None else ""))
+        if not approval_token:
+            if plan is not None:
+                # Preserve deterministic plan/target errors ahead of the
+                # missing-token error, without authorizing or executing.
+                try:
+                    self._validated_sequence_record(plan)
+                except (TypeError, ValueError, KeyError) as exc:
+                    reason = "invalid sequence plan record" if isinstance(exc, TypeError) else (str(exc) or "invalid sequence plan record")
+                    self._sequence_reject(reason, target=target,
+                                          plan_hash_value=plan_hash(validate_plan(plan)))
+                    raise
+            target = canonical_input.target if canonical_input is not None else None
+            self._sequence_reject("authorization missing", target=target,
+                                          plan_hash_value=plan_hash(canonical_input) if canonical_input is not None else "")
+            raise ValueError("approval_token is required; authorize the exact plan first")
+        expected = canonical_input
+        result = self.sequence_executor.execute(approval_token, expected_plan=expected)
+        return self._sequence_envelope(
+            "kvm_sequence_execute", read_only=False, target=result.target,
+            ok=result.ok, state="completed" if result.ok else "aborted",
+            plan_hash=result.plan_hash, action_count=result.completed_steps,
+            elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
+            execution_status="completed" if result.ok else "aborted",
+            completed_steps=result.completed_steps,
+            cleanup_ok=result.cleanup_ok,
+            cleanup_status="ok" if result.cleanup_ok else "failed",
+            cleanup_errors=list(result.cleanup_errors), error=result.error or None)
+
+    def kvm_workflow_list(self) -> dict:
+        workflows = list_workflows(self.workflow_repository)
+        return self._sequence_envelope("kvm_workflow_list", read_only=True,
+                                       state="observed", workflows=workflows)
+
+    def kvm_workflow_inspect(self, name: str, revision: str | None = None,
+                             target: str | None = None) -> dict:
+        workflow = inspect_workflow(self.workflow_repository, name, revision, target)
+        return self._sequence_envelope("kvm_workflow_inspect", read_only=True,
+                                       target=workflow.get("target"), state="observed",
+                                       workflow=workflow)
+
+    def kvm_workflow_authorize(self, name: str, revision: str, *, approved: bool,
+                               target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
+        invocation_target = target
+        if invocation_target is None:
+            for definition in self.workflow_repository.list():
+                if definition.name == name and not definition.target_independent: invocation_target = definition.target
+        try:
+            workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        except (TypeError, ValueError, KeyError) as exc:
+            self._sequence_reject(normalize_error(exc) or "operation rejected", target=invocation_target)
+            raise
+        actual = invocation_target or workflow.target
+        bound = workflow.plan if workflow.plan.target == actual else replace(workflow.plan, target=actual)
+        self._sequence_write_gate("kvm_sequence_authorize", target=actual, plan_hash_value=plan_hash(bound))
+        auth = self.sequence_executor.authorize(self.sequence_executor.plan(bound, workflow_revision=workflow.revision), approved=approved, ttl_s=ttl_s)
+        result = self._sequence_envelope("kvm_workflow_authorize", read_only=False, target=auth.target, state="authorized", plan_hash=auth.plan_hash, workflow_revision=workflow.revision, expires_at=auth.expires_at)
+        result["evidence"]["approval_token"] = auth.token
+        return result
+
+    def kvm_workflow_execute(self, name: str, revision: str, *, approved: bool = False,
+                             approval_token: str | None = None, target: str | None = None, ttl_s: float = 30.0) -> dict:
+        self._validate_authorization_inputs(approved, ttl_s)
+        invocation_target = target
+        if invocation_target is None:
+            for definition in self.workflow_repository.list():
+                if definition.name == name and not definition.target_independent: invocation_target = definition.target
+        try:
+            workflow = resolve_workflow(self.workflow_repository, name, revision, invocation_target)
+        except (TypeError, ValueError, KeyError) as exc:
+            self._sequence_reject(normalize_error(exc) or "operation rejected", target=invocation_target)
+            raise
+        self._sequence_write_gate("kvm_workflow_execute", target=invocation_target or workflow.target,
+                                  plan_hash_value=plan_hash(workflow.plan))
+        if not approval_token:
+            self._sequence_reject("authorization missing", target=invocation_target or workflow.target,
+                                          plan_hash_value=plan_hash(workflow.plan))
+            raise ValueError("approval_token is required; authorize the exact workflow first")
+        result = self.sequence_executor.execute(
+            approval_token, expected_plan=workflow.plan,
+            expected_workflow_revision=workflow.revision,
+            expected_target=invocation_target or workflow.target)
+        return self._sequence_envelope(
+            "kvm_workflow_execute", read_only=False, target=result.target,
+            ok=result.ok, state="completed" if result.ok else "aborted",
+            plan_hash=result.plan_hash, action_count=len(workflow.plan.actions),
+            elapsed_ms=result.elapsed_ms, execution_ok=result.ok,
+            execution_status="completed" if result.ok else "aborted",
+            completed_steps=result.completed_steps, cleanup_ok=result.cleanup_ok,
+            cleanup_status="ok" if result.cleanup_ok else "failed",
+            cleanup_errors=list(result.cleanup_errors), error=result.error or None)
