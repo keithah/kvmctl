@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -96,26 +97,23 @@ func (e *Executor) executeUntil(ctx context.Context, d Device, p Plan, expires t
 				return err
 			}
 		}
-		var err error
-		switch a.Type {
-		case "key":
-			err = d.Key(ctx, a.Value)
-		case "text":
-			err = d.Text(ctx, a.Value)
-		case "wait":
+		action := a
+		if action.Type == "wait" {
 			remaining := p.MaxDuration - e.now().Sub(start)
-			if expires.Sub(e.now()) < remaining {
-				remaining = expires.Sub(e.now())
+			if exp := expires.Sub(e.now()); exp < remaining {
+				remaining = exp
 			}
 			if remaining <= 0 {
 				return errors.New("sequence deadline exceeded")
 			}
-			waitFor := time.Duration(a.DurationMS) * time.Millisecond
-			if waitFor > remaining {
-				waitFor = remaining
+			if waitFor := time.Duration(action.DurationMS) * time.Millisecond; waitFor > remaining {
+				action.DurationMS = int(remaining / time.Millisecond)
+				if action.DurationMS < 1 {
+					return errors.New("sequence deadline exceeded")
+				}
 			}
-			err = e.sleep(ctx, waitFor)
 		}
+		err := e.executeAction(ctx, d, action)
 		if err != nil {
 			return err
 		}
@@ -140,7 +138,75 @@ type KVMDDevice struct {
 	held map[string]bool
 }
 
+type shortcutAPI interface {
+	KVMDShortcut(context.Context, string) error
+}
+type mouseAPI interface {
+	KVMDMouseMove(context.Context, int, int) error
+	KVMDMouseButton(context.Context, string, bool) error
+	KVMDMouseWheel(context.Context, int, int) error
+}
+
 func NewKVMDDevice(api KVMDAPI) *KVMDDevice { return &KVMDDevice{api: api, held: map[string]bool{}} }
+
+func (d *KVMDDevice) Chord(ctx context.Context, keys string) error {
+	if a, ok := d.api.(shortcutAPI); ok {
+		return a.KVMDShortcut(ctx, strings.ReplaceAll(keys, "+", ","))
+	}
+	return d.Key(ctx, keys)
+}
+func (d *KVMDDevice) HoldKey(ctx context.Context, key string, dur time.Duration) error {
+	if err := d.api.KVMDKey(ctx, key, true); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	d.held[key] = true
+	d.mu.Unlock()
+	t := time.NewTimer(dur)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+	}
+	err := d.api.KVMDKey(ctx, key, false)
+	d.mu.Lock()
+	delete(d.held, key)
+	d.mu.Unlock()
+	return err
+}
+func (d *KVMDDevice) MouseMove(ctx context.Context, x, y int) error {
+	a, ok := d.api.(mouseAPI)
+	if !ok {
+		return errors.New("mouse unavailable")
+	}
+	return a.KVMDMouseMove(ctx, x, y)
+}
+func (d *KVMDDevice) MouseMovePct(context.Context, float64, float64) error {
+	return errors.New("mouse percentage unavailable")
+}
+func (d *KVMDDevice) MouseClick(ctx context.Context, button string, count int) error {
+	a, ok := d.api.(mouseAPI)
+	if !ok {
+		return errors.New("mouse unavailable")
+	}
+	for i := 0; i < count; i++ {
+		if err := a.KVMDMouseButton(ctx, button, true); err != nil {
+			return err
+		}
+		if err := a.KVMDMouseButton(ctx, button, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (d *KVMDDevice) MouseScroll(ctx context.Context, dx, dy int) error {
+	a, ok := d.api.(mouseAPI)
+	if !ok {
+		return errors.New("mouse unavailable")
+	}
+	return a.KVMDMouseWheel(ctx, dx, dy)
+}
 func (d *KVMDDevice) Key(ctx context.Context, key string) error {
 	if err := d.api.KVMDKey(ctx, key, true); err != nil {
 		return err
