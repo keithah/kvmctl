@@ -60,6 +60,25 @@ func TestJournalRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestValidateSupportsCanonicalNonHardwareActionsAndLimits(t *testing.T) {
+	valid := Plan{Target: " host-a ", Actions: []Action{
+		{Type: "key", Value: "ControlLeft+AltLeft+Delete"},
+		{Type: "hold_key", Value: "ShiftLeft", DurationMS: 5000},
+		{Type: "release_all"},
+		{Type: "mouse_move", X: 10, Y: -20},
+		{Type: "wait", DurationMS: 1},
+	}, MaxDuration: 30 * time.Second}
+	if err := Validate(valid); err != nil {
+		t.Fatalf("valid plan rejected: %v", err)
+	}
+	if err := Validate(Plan{Target: "x", Actions: []Action{{Type: "hold_key", Value: "A", DurationMS: 5001}}, MaxDuration: time.Second}); err == nil {
+		t.Fatal("expected hold limit")
+	}
+	if err := Validate(Plan{Target: "x", Actions: []Action{{Type: "wait", DurationMS: 1}}, MaxDuration: time.Second, UnexpectedScreenPolicy: "retry"}); err == nil {
+		t.Fatal("expected policy rejection")
+	}
+}
+
 func contains(s, sub string) bool { return len(s) >= len(sub) && index(s, sub) >= 0 }
 func index(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {
