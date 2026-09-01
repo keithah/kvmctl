@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"kvmctl-pp-cli/internal/cli"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli"
 )
 
 func main() {
