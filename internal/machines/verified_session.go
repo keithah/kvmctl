@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -197,10 +196,10 @@ func (s *VerifiedSessionStore) withLock(fn func() error) error {
 	}
 	defer f.Close()
 	_ = os.Chmod(lockPath, 0600)
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockExclusive(f); err != nil {
 		return err
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer unlockExclusive(f)
 	return fn()
 }
 
