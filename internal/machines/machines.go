@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -269,5 +268,3 @@ func sleepWithContext(ctx context.Context, d time.Duration, sleep func(context.C
 		return nil
 	}
 }
-
-var _ = syscall.Flock

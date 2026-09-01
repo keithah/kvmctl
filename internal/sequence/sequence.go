@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -456,7 +455,7 @@ func (j *Journal) Append(v map[string]any) error {
 	if err := secureDir(filepath.Dir(j.path)); err != nil {
 		return err
 	}
-	f, e := os.OpenFile(j.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
+	f, e := openJournalFile(j.path)
 	if e != nil {
 		return e
 	}
