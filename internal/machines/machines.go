@@ -79,10 +79,22 @@ type SelectionRecord struct {
 	At     time.Time      `json:"at"`
 }
 type SelectOptions struct {
-	Rearm   bool
-	Settle  time.Duration
-	Timeout time.Duration
+	Rearm          bool
+	Settle         time.Duration
+	Timeout        time.Duration
+	Sleep          func(context.Context, time.Duration) error
+	VerifyPolicy   *VerifyPolicy
+	VerifyAttempts int
+	VerifyDelay    time.Duration
+	Hold           time.Duration
+	Gap            time.Duration
 }
+
+const (
+	HoldMS = 120 * time.Millisecond
+	GapMS  = 150 * time.Millisecond
+)
+
 type Locker interface {
 	Acquire(context.Context) error
 	TryAcquire() error
@@ -195,9 +207,22 @@ func (s Selector) Select(parent context.Context, name string, opts SelectOptions
 		}
 	}
 	rec.State = SelectedUnverified
+	hold := opts.Hold
+	if hold <= 0 {
+		hold = HoldMS
+	}
+	gap := opts.Gap
+	if gap <= 0 {
+		gap = GapMS
+	}
+	sleep := opts.Sleep
 	for _, k := range []string{"ControlRight", "ControlRight", fmt.Sprintf("Digit%d", t.Port), "Enter"} {
 		if e = s.SendKey(ctx, k, true); e != nil {
 			return rec, fmt.Errorf("selection failed: %w", e)
+		}
+		if err := sleepWithContext(ctx, hold, sleep); err != nil {
+			_ = s.SendKey(context.WithoutCancel(ctx), k, false)
+			return rec, err
 		}
 		if e = s.SendKey(ctx, k, false); e != nil {
 			cleanup, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -205,13 +230,13 @@ func (s Selector) Select(parent context.Context, name string, opts SelectOptions
 			cancelCleanup()
 			return rec, fmt.Errorf("selection failed: %w", e)
 		}
+		if err := sleepWithContext(ctx, gap, sleep); err != nil {
+			return rec, err
+		}
 	}
 	if opts.Settle > 0 {
-		timer := time.NewTimer(opts.Settle)
-		select {
-		case <-ctx.Done():
-			return rec, ctx.Err()
-		case <-timer.C:
+		if err := sleepWithContext(ctx, opts.Settle, sleep); err != nil {
+			return rec, err
 		}
 	}
 	if e = s.Verify(ctx, t); e != nil {
@@ -226,6 +251,23 @@ func (s Selector) Select(parent context.Context, name string, opts SelectOptions
 func LockPath(dir, device string) string {
 	h := sha256.Sum256([]byte(device))
 	return filepath.Join(dir, hex.EncodeToString(h[:])+".lock")
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration, sleep func(context.Context, time.Duration) error) error {
+	if d <= 0 {
+		return nil
+	}
+	if sleep != nil {
+		return sleep(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 var _ = syscall.Flock

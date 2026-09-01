@@ -74,3 +74,20 @@ func (j *Journal) Append(record map[string]any) error {
 	_, err = f.Write(data)
 	return err
 }
+
+// Checkpoint is the host-reboot style helper that prevents caller-supplied
+// details from spoofing operation/target/transition.
+func (j *Journal) Checkpoint(operation, target, transition string, details map[string]any) error {
+	if details == nil {
+		details = map[string]any{}
+	}
+	// Remove reserved keys if caller tried to spoof.
+	delete(details, "operation")
+	delete(details, "target")
+	delete(details, "transition")
+	rec := map[string]any{"operation": operation, "target": target, "transition": transition}
+	for k, v := range details {
+		rec[k] = v
+	}
+	return j.Append(rec)
+}
