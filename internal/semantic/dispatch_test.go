@@ -3,8 +3,8 @@ package semantic
 import (
 	"context"
 	"encoding/json"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"testing"

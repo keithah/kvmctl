@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"kvmctl-pp-cli/internal/learn/lookups"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/lookups"
 )
 
 // DefaultJaccardMin matches the recall-side floor. Applying the same

@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"kvmctl-pp-cli/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
 )
 
 // The invocation journal records one entry per CLI invocation in dated

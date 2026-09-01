@@ -1,4 +1,4 @@
-module kvmctl-pp-cli
+module github.com/mvanhorn/printing-press-library/library/devices/kvmctl
 
 go 1.26.6
 

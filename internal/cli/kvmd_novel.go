@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/results"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/switcher"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/results"
-	"kvmctl-pp-cli/internal/switcher"
 )
 
 // pp:data-source live

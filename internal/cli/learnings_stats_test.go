@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // runLearningsStatsJSON executes `learnings stats --json` against the

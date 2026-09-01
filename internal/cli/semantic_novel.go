@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/semantic"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/semantic"
 )
 
 func init() { registerNovelCommand(registerSemanticCommands) }

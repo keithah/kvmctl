@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/cliutil/testenv"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil/testenv"
 )
 
 // credsSampleReadPermsToken is an exposed on-disk token value written to the

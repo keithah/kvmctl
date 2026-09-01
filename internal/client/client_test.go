@@ -16,8 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 )
 
 func TestTruncateBody(t *testing.T) {

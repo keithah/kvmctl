@@ -8,10 +8,10 @@ import (
 	"os"
 	"sort"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/learn"
 )
 
 // agentContextSchemaVersion is bumped on any breaking change to the JSON

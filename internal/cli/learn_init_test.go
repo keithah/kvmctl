@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // TestNewLearnConfig_BuildsConfig pins that the emitted init shim

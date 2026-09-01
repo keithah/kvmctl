@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"kvmctl-pp-cli/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 )
 
 func TestKVMDLoginFormAndCapabilities(t *testing.T) {

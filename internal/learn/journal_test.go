@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"kvmctl-pp-cli/internal/cli"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/cliutil/testenv"
-	"kvmctl-pp-cli/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil/testenv"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
 )
 
 // withJournalHome isolates a test in a temp HOME with every journal

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"kvmctl-pp-cli/internal/results"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/results"
 )
 
 type ProbeError struct{ msg string }

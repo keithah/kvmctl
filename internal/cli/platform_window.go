@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/platform"
 )
 
 func adoptPlatformCommandWindow(cmd *cobra.Command, flags *rootFlags) error {
