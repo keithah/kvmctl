@@ -63,7 +63,7 @@ func TestSelectVerifiesBeforeReturning(t *testing.T) {
 	inv := DefaultInventory()
 	events := []string{}
 	s := Selector{Inventory: inv, LockFactory: func(string) (Locker, error) { return nopLocker{}, nil }, SendKey: func(ctx context.Context, key string, down bool) error { events = append(events, key); return nil }, Verify: func(context.Context, Target) error { return nil }}
-	rec, err := s.Select(context.Background(), "pve2", SelectOptions{Rearm: false, Settle: time.Nanosecond})
+	rec, err := s.Select(context.Background(), "pve2", SelectOptions{Rearm: false, Settle: time.Nanosecond, Hold: time.Nanosecond, Gap: time.Nanosecond, Sleep: func(context.Context, time.Duration) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +74,9 @@ func TestSelectVerifiesBeforeReturning(t *testing.T) {
 
 func TestSelectTimeoutLeavesUnverified(t *testing.T) {
 	s := Selector{Inventory: DefaultInventory(), LockFactory: func(string) (Locker, error) { return nopLocker{}, nil }, SendKey: func(ctx context.Context, key string, down bool) error { <-ctx.Done(); return ctx.Err() }, Verify: func(context.Context, Target) error { return nil }}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	rec, err := s.Select(ctx, "pve1", SelectOptions{Rearm: false})
+	rec, err := s.Select(ctx, "pve1", SelectOptions{Rearm: false, Hold: time.Nanosecond, Gap: time.Nanosecond, Sleep: func(context.Context, time.Duration) error { return nil }})
 	if err == nil || rec.State == Verified {
 		t.Fatalf("rec=%#v err=%v", rec, err)
 	}
