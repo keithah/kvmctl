@@ -27,12 +27,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/learn/entities"
-	"kvmctl-pp-cli/internal/learn/lookups"
-	"kvmctl-pp-cli/internal/learn/patterns"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/lookups"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/patterns"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // noLearnEnvVar is the environment variable that disables the learning

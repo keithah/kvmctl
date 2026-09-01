@@ -8,8 +8,8 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"kvmctl-pp-cli/internal/cli"
-	"kvmctl-pp-cli/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 )
 
 const mcpTenantGateOwnerKey = "pp:tenant-gate"

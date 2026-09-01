@@ -14,14 +14,14 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/platform"
-	"kvmctl-pp-cli/internal/store"
 )
 
 type rootFlags struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/sequence"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/sequence"
 )
 
 const workflowFixture = `[{"name":"zeta","target_independent":true,"steps":[{"type":"text","value":"super-secret"},{"type":"assert_screen","contains":"password"}]},{"name":"alpha","target":"host-a","steps":[{"type":"release_all"}]}]`

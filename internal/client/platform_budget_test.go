@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"kvmctl-pp-cli/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 )
 
 func TestPlatformBudgetLookupContract(t *testing.T) {

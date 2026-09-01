@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"kvmctl-pp-cli/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
 )
 
 // NormalizedQuery is the entity-aware normalized representation of a

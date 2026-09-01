@@ -12,7 +12,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"kvmctl-pp-cli/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
 )
 
 // stubResolver is a test-only EntityResolver backed by an in-memory

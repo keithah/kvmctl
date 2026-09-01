@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 )
 
 func TestPlatformRateLimitRetriesSafeRequestAndRecordsMetadata(t *testing.T) {

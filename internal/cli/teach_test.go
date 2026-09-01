@@ -13,11 +13,11 @@ import (
 	"sync"
 	"testing"
 
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/cliutil/testenv"
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/learn/entities"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil/testenv"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 func unmarshalAgentResults(t *testing.T, stdout string, out any) {

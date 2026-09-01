@@ -20,9 +20,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/learn/entities"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // newTeachPlaybookCmd builds the standalone command for recording a

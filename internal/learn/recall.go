@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"kvmctl-pp-cli/internal/learn/entities"
-	"kvmctl-pp-cli/internal/learn/lookups"
-	"kvmctl-pp-cli/internal/learn/patterns"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/lookups"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/patterns"
 )
 
 // Default thresholds. Keep in sync with the documented contract in

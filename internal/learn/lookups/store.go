@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	"kvmctl-pp-cli/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
 )
 
 // LookupRow is the canonical seed-row shape used by both the seeds

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
 	"github.com/pelletier/go-toml/v2"
-	"kvmctl-pp-cli/internal/cliutil"
 )
 
 type Config struct {
