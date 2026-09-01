@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/machines"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/machines"
 )
 
 func init() { registerNovelCommand(registerMachineCommands) }

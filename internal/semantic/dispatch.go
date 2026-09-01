@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/results"
-	"kvmctl-pp-cli/internal/sequence"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/results"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/sequence"
 )
 
 var Operations = []string{

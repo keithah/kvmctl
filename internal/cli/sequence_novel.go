@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/sequence"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/sequence"
 )
 
 // pp:data-source local

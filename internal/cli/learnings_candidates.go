@@ -28,8 +28,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // registerLearningsCandidateCommands attaches the candidate lifecycle

@@ -18,9 +18,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"kvmctl-pp-cli/internal/cli/playbooks"
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli/playbooks"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // twoPlaybookFS returns an fstest.MapFS with two minimal playbooks +

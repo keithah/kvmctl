@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 )
 
 func mustClient(t *testing.T, url string) *client.Client {

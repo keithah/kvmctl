@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
 )
 
 // Hand-coded auth flows can report credentials that are intentionally not

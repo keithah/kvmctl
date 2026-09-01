@@ -22,12 +22,12 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/platform"
 )
 
 var As = errors.As

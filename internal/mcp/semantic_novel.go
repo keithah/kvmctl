@@ -7,7 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"kvmctl-pp-cli/internal/semantic"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/semantic"
 )
 
 func registerSemanticTool(s *server.MCPServer) {

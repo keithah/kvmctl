@@ -12,9 +12,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/platform"
 )
 
 // platformSourceRegistration is intentionally package-local: a preserved

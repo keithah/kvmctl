@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
 
 	"github.com/spf13/cobra"
 )

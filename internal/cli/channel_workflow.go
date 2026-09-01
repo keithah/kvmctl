@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/store"
 )
 
 func newWorkflowCmd(flags *rootFlags) *cobra.Command {

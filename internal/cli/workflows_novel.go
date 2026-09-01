@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/sequence"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/sequence"
 )
 
 // pp:data-source local
