@@ -37,7 +37,7 @@ go install github.com/mvanhorn/printing-press-library/library/devices/kvmctl/cmd
 
 If `--version` reports "command not found" after install, the runtime cannot see the binary directory on `$PATH`. Do not proceed with skill commands until verification succeeds.
 
-The verified REST subset used by kvmctl for KVMD-compatible GLKVM devices. Endpoint shapes are transcribed from the PiKVM HTTP API reference and the live GLKVM probe recorded in PROBE_NOTES.md. Device-specific switch and verification workflows remain novel application code, not generated API endpoints.
+`kvmctl` is a Go CLI and MCP server for KVMD-compatible KVM devices such as GLKVM. It combines the verified KVMD REST surface with safe semantic operations, target-bound sequences, immutable workflows, recovery, host probes, and agent-friendly evidence envelopes. Device-specific workflows remain hand-authored application code, not generated API endpoints.
 
 ## Unique Capabilities
 
@@ -57,6 +57,20 @@ These capabilities aren't available in any other tool for this API.
 
   ```bash
   kvmctl-pp-cli workflow-list --repository workflows.json --agent
+  ```
+
+- **Immutable workflow lifecycle** — use `workflow-inspect`, `workflow-authorize`, and `workflow-execute` to inspect redacted plans, authorize one exact revision, and execute only the approved target-bound workflow.
+
+  ```bash
+  kvmctl-pp-cli workflow-inspect --repository workflows.json --name safe-check --agent
+  kvmctl-pp-cli workflow-authorize --repository workflows.json --name safe-check --target <target> --agent
+  ```
+- **Machine and host safety controls** — bounded machine verification, target locks, HMAC-authenticated sessions, cancellation-safe recovery, checkpointed reboot support, and OCR coordinate mapping. These paths require explicit policy and real inputs; the CLI does not fabricate device or OCR results.
+
+  ```bash
+  kvmctl-pp-cli machines --help
+  kvmctl-pp-cli semantic host-identity --agent
+  kvmctl-pp-cli semantic verify --agent
   ```
 
 ## Command Reference
