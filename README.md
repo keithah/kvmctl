@@ -147,6 +147,26 @@ This checks your configuration and credentials.
 kvmctl-pp-cli info
 ```
 
+## Unique Features
+
+These capabilities aren't available in any other tool for this API.
+
+### Safety and agent readiness
+- **`semantic capabilities`** — Expose named KVMD operations through stable evidence envelopes with explicit read/write policy.
+
+  _Agents can discover safe KVM capabilities without learning endpoint details._
+
+  ```bash
+  kvmctl-pp-cli semantic capabilities --agent
+  ```
+- **`workflow-list`** — List immutable named KVM workflows in deterministic order.
+
+  _Workflow plans remain inspectable and reproducible before hardware actions._
+
+  ```bash
+  kvmctl-pp-cli workflow-list --repository workflows.json --agent
+  ```
+
 ## Usage
 
 Run `kvmctl-pp-cli --help` for the full command reference and flag list.

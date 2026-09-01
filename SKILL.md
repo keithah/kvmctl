@@ -39,6 +39,26 @@ If `--version` reports "command not found" after install, the runtime cannot see
 
 The verified REST subset used by kvmctl for KVMD-compatible GLKVM devices. Endpoint shapes are transcribed from the PiKVM HTTP API reference and the live GLKVM probe recorded in PROBE_NOTES.md. Device-specific switch and verification workflows remain novel application code, not generated API endpoints.
 
+## Unique Capabilities
+
+These capabilities aren't available in any other tool for this API.
+
+### Safety and agent readiness
+- **`semantic capabilities`** — Expose named KVMD operations through stable evidence envelopes with explicit read/write policy.
+
+  _Agents can discover safe KVM capabilities without learning endpoint details._
+
+  ```bash
+  kvmctl-pp-cli semantic capabilities --agent
+  ```
+- **`workflow-list`** — List immutable named KVM workflows in deterministic order.
+
+  _Workflow plans remain inspectable and reproducible before hardware actions._
+
+  ```bash
+  kvmctl-pp-cli workflow-list --repository workflows.json --agent
+  ```
+
 ## Command Reference
 
 **hid** — Manage hid
