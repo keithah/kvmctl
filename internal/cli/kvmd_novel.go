@@ -54,7 +54,7 @@ func newKVMDStatusCmd(flags *rootFlags) *cobra.Command {
 	}}
 }
 func newKVMDCapabilitiesCmd(flags *rootFlags) *cobra.Command {
-	return &cobra.Command{Use: "capabilities", Short: "Discover KVMD capabilities", Annotations: map[string]string{"mcp:read-only": "true", "pp:novel": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "capabilities", Short: "Discover KVMD capabilities", Example: "  kvmctl-pp-cli capabilities\n  kvmctl-pp-cli capabilities --json", Annotations: map[string]string{"mcp:read-only": "true", "pp:novel": "true"}, RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := kvmdClient(flags)
 		if err != nil {
 			return err
