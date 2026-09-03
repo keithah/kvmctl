@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "id": "20260903-stream-backed-fresh-snapshot",
+  "applied_at": "2026-09-03",
+  "base_run_id": "20260831-161927",
+  "base_printing_press_version": "4.31.3",
+  "files": [
+    "go.mod",
+    "go.sum",
+    "internal/client/kvmd.go",
+    "internal/client/kvmd_test.go",
+    "internal/semantic/ocr_loop.go"
+  ],
+  "summary": "Preserve fresh KVMD snapshots under an authenticated temporary stream WebSocket lease and decode generated binary-response envelopes into JPEG bytes before OCR.",
+  "reason": "This KVMD returns HTTP 503 for snapshots when no stream WebSocket is held open. OCR evidence must remain live, read-only, and byte-grounded rather than fail after transport wrapping or use a fabricated fallback.",
+  "validated_outcome": "A TLS httptest fixture proves a 503 snapshot is retried under a token-authenticated stream lease and returns decoded JPEG bytes. A live read-only GLKVM observe invocation returned a fresh SHA-256 observation, dimensions, and OCR regions without HID, streamer configuration, reboot, or BIOS mutation."
+}
