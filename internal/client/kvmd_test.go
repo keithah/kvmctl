@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 )
 
@@ -46,6 +48,49 @@ func TestKVMDLoginFormAndCapabilities(t *testing.T) {
 	}
 	if !gotToken || !caps["hid"] || !caps["stream"] || !caps["ocr"] || !caps["switch"] {
 		t.Fatalf("token=%v caps=%v", gotToken, caps)
+	}
+}
+
+func TestKVMDSnapshotRetriesUnderAuthenticatedStreamLease(t *testing.T) {
+	var streamOpen atomic.Bool
+	var snapshotRequests atomic.Int32
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ws":
+			if r.URL.Query().Get("stream") != "1" || r.Header.Get("token") != "tok" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Errorf("upgrade: %v", err)
+				return
+			}
+			streamOpen.Store(true)
+			defer conn.Close()
+			_, _, _ = conn.ReadMessage()
+		case "/api/streamer/snapshot":
+			snapshotRequests.Add(1)
+			if !streamOpen.Load() {
+				http.Error(w, "stream required", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("fresh-snapshot"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+
+	c := New(&config.Config{BaseURL: s.URL, KvmctlKvmdToken: "tok", KVMCTLInsecure: true}, 0, 0)
+	got, err := c.KVMDSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "fresh-snapshot" || snapshotRequests.Load() < 2 || !streamOpen.Load() {
+		t.Fatalf("snapshot=%q requests=%d streamOpen=%v", got, snapshotRequests.Load(), streamOpen.Load())
 	}
 }
 

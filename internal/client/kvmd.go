@@ -3,11 +3,18 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 var ErrCapabilityUnavailable = errors.New("capability unavailable")
@@ -29,6 +36,102 @@ func (c *Client) KVMDLogin(ctx context.Context, user, password string) (string, 
 		return "", errors.New("login response missing token")
 	}
 	return v.Result.Token, nil
+}
+
+// KVMDSnapshot returns a fresh JPEG snapshot. A KVMD streamer may return 503
+// unless a stream WebSocket is held open, so it retries once under a temporary
+// read-only stream lease. It does not nudge or reconfigure the streamer.
+func (c *Client) KVMDSnapshot(ctx context.Context) ([]byte, error) {
+	headers := map[string]string{"Accept": "image/jpeg", BinaryResponseHeader: "true"}
+	data, err := c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, headers)
+	if err == nil {
+		return decodeKVMDSnapshot(data)
+	}
+	if !isKVMDStreamerUnavailable(err) {
+		return nil, err
+	}
+	lease, leaseErr := c.OpenKVMDStream(ctx)
+	if leaseErr != nil {
+		return nil, fmt.Errorf("open KVMD stream lease: %w", leaseErr)
+	}
+	defer lease.Close()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(100 * time.Millisecond):
+	}
+	data, err = c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, headers)
+	if err != nil {
+		return nil, err
+	}
+	return decodeKVMDSnapshot(data)
+}
+
+func decodeKVMDSnapshot(data []byte) ([]byte, error) {
+	var envelope binaryResponseEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil || !envelope.PPBinary {
+		return data, nil
+	}
+	if envelope.Encoding != "base64" || !strings.HasPrefix(strings.ToLower(envelope.ContentType), "image/") {
+		return nil, errors.New("unexpected KVMD snapshot response envelope")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(envelope.Data)
+	if err != nil || len(decoded) != envelope.Bytes || len(decoded) == 0 {
+		return nil, errors.New("invalid KVMD snapshot response envelope")
+	}
+	return decoded, nil
+}
+
+func isKVMDStreamerUnavailable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "HTTP 503")
+}
+
+// OpenKVMDStream opens the authenticated stream prerequisite required by
+// KVMD before snapshot reads. The caller must close the returned lease.
+func (c *Client) OpenKVMDStream(ctx context.Context) (io.Closer, error) {
+	if c == nil || c.Config == nil {
+		return nil, errors.New("KVMD client configuration is required")
+	}
+	endpoint, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse KVMD URL: %w", err)
+	}
+	switch endpoint.Scheme {
+	case "https":
+		endpoint.Scheme = "wss"
+	case "http":
+		endpoint.Scheme = "ws"
+	default:
+		return nil, fmt.Errorf("unsupported KVMD URL scheme %q", endpoint.Scheme)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/api/ws"
+	endpoint.RawQuery = "stream=1"
+
+	token, err := c.authHeader(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get KVMD stream credentials: %w", err)
+	}
+	headers := http.Header{"Origin": []string{originForKVMD(endpoint)}}
+	if token != "" {
+		headers.Set("token", token)
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	if c.Config.KVMCTLInsecure {
+		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- explicit operator opt-in
+	}
+	conn, _, err := dialer.DialContext(ctx, endpoint.String(), headers)
+	if err != nil {
+		return nil, fmt.Errorf("open KVMD stream: %w", err)
+	}
+	return conn, nil
+}
+
+func originForKVMD(endpoint *url.URL) string {
+	scheme := "http"
+	if endpoint.Scheme == "wss" {
+		scheme = "https"
+	}
+	return scheme + "://" + endpoint.Host
 }
 
 func (c *Client) KVMDCapabilities(ctx context.Context) (map[string]bool, error) {
