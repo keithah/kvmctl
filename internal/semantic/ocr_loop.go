@@ -98,7 +98,7 @@ func opVerifyText(ctx context.Context, c *client.Client, args map[string]any) (r
 }
 
 func captureObservation(ctx context.Context, c *client.Client) (ocr.Observation, error) {
-	imageBytes, err := c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, map[string]string{"Accept": "image/jpeg", client.BinaryResponseHeader: "true"})
+	imageBytes, err := c.KVMDSnapshot(ctx)
 	if err != nil || len(imageBytes) == 0 {
 		if err == nil {
 			err = errors.New("empty snapshot")
