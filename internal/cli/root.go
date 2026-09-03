@@ -293,6 +293,10 @@ func newRootCmd(flags *rootFlags) *cobra.Command {
 		Short: "Manage kvmctl resources via the kvmctl API",
 		Long: `Manage kvmctl resources via the kvmctl API.
 
+Highlights (not in the official API docs):
+  • semantic capabilities   Expose named KVMD operations through stable evidence envelopes with explicit read/write policy.
+  • workflow-list   List immutable named KVM workflows in deterministic order.
+
 Add --agent to any command for JSON output + non-interactive mode.
 Run 'kvmctl-pp-cli doctor' to verify auth and connectivity.`,
 		SilenceUsage: true,
