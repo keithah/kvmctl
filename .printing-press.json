@@ -6,7 +6,8 @@
   "display_name": "Kvmd Compatible Kvm",
   "cli_name": "kvmctl-pp-cli",
   "creator": {
-    "handle": "keithah"
+    "handle": "keithah",
+    "name": "Keith"
   },
   "owner": "keithah",
   "printer": "keithah",
@@ -17,6 +18,18 @@
   "run_id": "20260831-161927",
   "category": "devices",
   "description": "The verified REST subset used by kvmctl for KVMD-compatible GLKVM devices.",
+  "novel_features": [
+    {
+      "name": "Structured semantic dispatch",
+      "command": "semantic capabilities",
+      "description": "Expose named KVMD operations through stable evidence envelopes with explicit read/write policy."
+    },
+    {
+      "name": "Target-bound workflows",
+      "command": "workflow-list",
+      "description": "List immutable named KVM workflows in deterministic order."
+    }
+  ],
   "mcp_binary": "kvmctl-pp-mcp",
   "mcp_tool_count": 14,
   "mcp_public_tool_count": 1,

@@ -26,7 +26,10 @@ type whichEntry struct {
 // its hero features. Endpoint-level commands are discoverable via
 // `--help`; `which` exists to resolve a natural-language capability
 // query to one of the commands the skill says matter most.
-var whichIndex = []whichEntry{}
+var whichIndex = []whichEntry{
+	{Command: "semantic capabilities", Description: "Expose named KVMD operations through stable evidence envelopes with explicit read/write policy.", Group: "Safety and agent readiness", WhyItMatters: "Agents can discover safe KVM capabilities without learning endpoint details."},
+	{Command: "workflow-list", Description: "List immutable named KVM workflows in deterministic order.", Group: "Safety and agent readiness", WhyItMatters: "Workflow plans remain inspectable and reproducible before hardware actions."},
+}
 
 // whichMatch pairs an index entry with its ranking score for a query.
 // Higher score means stronger match. The ranker is naive (exact token
