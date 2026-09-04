@@ -144,7 +144,10 @@ func (c *Client) websocketTLSConfig() *tls.Config {
 	if !ok || transport.TLSClientConfig == nil {
 		return nil
 	}
-	return transport.TLSClientConfig.Clone()
+	config := transport.TLSClientConfig.Clone()
+	// WebSocket requires HTTP/1.1; do not offer the HTTP transport's h2 ALPN.
+	config.NextProtos = []string{"http/1.1"}
+	return config
 }
 
 func originForKVMD(endpoint *url.URL) string {
