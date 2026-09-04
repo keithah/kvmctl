@@ -45,3 +45,16 @@ func TestParseJSONResponseRejectsMissingWordConfidence(t *testing.T) {
 		t.Fatalf("error = %v, want OCR failure", err)
 	}
 }
+
+func TestParseTesseractTSVPreservesQuotes(t *testing.T) {
+	data := []byte("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n" +
+		"1\t1\t0\t0\t0\t0\t0\t0\t100\t50\t-1\t\n" +
+		"5\t1\t1\t1\t1\t1\t10\t20\t30\t10\t95.0\t\"Advanced\"\n")
+	width, height, words, err := parseTesseractTSV(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if width != 100 || height != 50 || len(words) != 1 || words[0].Text != `"Advanced"` {
+		t.Fatalf("got dimensions=%dx%d words=%#v", width, height, words)
+	}
+}

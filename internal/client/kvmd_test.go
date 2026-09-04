@@ -2,8 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -71,9 +74,9 @@ func TestKVMDSnapshotRetriesUnderAuthenticatedStreamLease(t *testing.T) {
 			defer conn.Close()
 			_, _, _ = conn.ReadMessage()
 		case "/api/streamer/snapshot":
-			snapshotRequests.Add(1)
-			if !streamOpen.Load() {
-				http.Error(w, "stream required", http.StatusServiceUnavailable)
+			request := snapshotRequests.Add(1)
+			if !streamOpen.Load() || request < 5 {
+				http.Error(w, "stream warming", http.StatusServiceUnavailable)
 				return
 			}
 			w.Header().Set("Content-Type", "image/jpeg")
@@ -94,6 +97,33 @@ func TestKVMDSnapshotRetriesUnderAuthenticatedStreamLease(t *testing.T) {
 	}
 }
 
+func TestOpenKVMDStreamUsesConfiguredCustomCA(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ws" || r.Header.Get("token") != "tok" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+	}))
+	defer s.Close()
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := New(&config.Config{BaseURL: s.URL, KvmctlKvmdToken: "tok", KVMCTLCA: caPath}, 0, 0)
+	lease, err := c.OpenKVMDStream(context.Background())
+	if err != nil {
+		t.Fatalf("custom CA websocket lease failed: %v", err)
+	}
+	_ = lease.Close()
+}
 func TestKVMDValidation(t *testing.T) {
 	c := &Client{}
 	if err := c.KVMDMouseMove(context.Background(), 32768, 0); err == nil {
