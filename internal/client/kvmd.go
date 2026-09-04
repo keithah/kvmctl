@@ -39,8 +39,8 @@ func (c *Client) KVMDLogin(ctx context.Context, user, password string) (string, 
 }
 
 // KVMDSnapshot returns a fresh JPEG snapshot. A KVMD streamer may return 503
-// unless a stream WebSocket is held open, so it retries once under a temporary
-// read-only stream lease. It does not nudge or reconfigure the streamer.
+// until a stream WebSocket is held open and initialized, so retries remain
+// bounded, context-aware, and inside the temporary read-only lease.
 func (c *Client) KVMDSnapshot(ctx context.Context) ([]byte, error) {
 	headers := map[string]string{"Accept": "image/jpeg", BinaryResponseHeader: "true"}
 	data, err := c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, headers)
@@ -55,16 +55,29 @@ func (c *Client) KVMDSnapshot(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("open KVMD stream lease: %w", leaseErr)
 	}
 	defer lease.Close()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(100 * time.Millisecond):
+
+	const maxAttempts = 8
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(attempt) * 100 * time.Millisecond
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		data, lastErr = c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, headers)
+		if lastErr == nil {
+			return decodeKVMDSnapshot(data)
+		}
+		if !isKVMDStreamerUnavailable(lastErr) {
+			return nil, lastErr
+		}
 	}
-	data, err = c.GetWithHeadersNoCache(ctx, "/api/streamer/snapshot", nil, headers)
-	if err != nil {
-		return nil, err
-	}
-	return decodeKVMDSnapshot(data)
+	return nil, fmt.Errorf("snapshot remained unavailable after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func decodeKVMDSnapshot(data []byte) ([]byte, error) {
@@ -115,15 +128,23 @@ func (c *Client) OpenKVMDStream(ctx context.Context) (io.Closer, error) {
 	if token != "" {
 		headers.Set("token", token)
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
-	if c.Config.KVMCTLInsecure {
-		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- explicit operator opt-in
-	}
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second, TLSClientConfig: c.websocketTLSConfig()}
 	conn, _, err := dialer.DialContext(ctx, endpoint.String(), headers)
 	if err != nil {
 		return nil, fmt.Errorf("open KVMD stream: %w", err)
 	}
 	return conn, nil
+}
+
+func (c *Client) websocketTLSConfig() *tls.Config {
+	if c == nil || c.HTTPClient == nil {
+		return nil
+	}
+	transport, ok := c.HTTPClient.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil {
+		return nil
+	}
+	return transport.TLSClientConfig.Clone()
 }
 
 func originForKVMD(endpoint *url.URL) string {

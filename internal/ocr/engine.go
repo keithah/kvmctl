@@ -3,7 +3,6 @@ package ocr
 import (
 	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -176,24 +175,28 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 func parseTesseractTSV(data []byte) (int, int, []Word, error) {
-	reader := csv.NewReader(bytes.NewReader(data))
-	reader.Comma = '	'
-	records, err := reader.ReadAll()
-	if err != nil || len(records) < 2 {
+	lines := strings.Split(strings.TrimRight(string(data), "\r\n"), "\n")
+	if len(lines) < 2 {
 		return 0, 0, nil, fmt.Errorf("%w: invalid Tesseract TSV", ErrOCRFailed)
 	}
 	header := []string{"level", "page_num", "block_num", "par_num", "line_num", "word_num", "left", "top", "width", "height", "conf", "text"}
-	if len(records[0]) != len(header) {
+	if got := strings.Split(strings.TrimSuffix(lines[0], "\r"), "	"); len(got) != len(header) {
 		return 0, 0, nil, fmt.Errorf("%w: invalid Tesseract TSV header", ErrOCRFailed)
-	}
-	for i := range header {
-		if records[0][i] != header[i] {
-			return 0, 0, nil, fmt.Errorf("%w: invalid Tesseract TSV header", ErrOCRFailed)
+	} else {
+		for i := range header {
+			if got[i] != header[i] {
+				return 0, 0, nil, fmt.Errorf("%w: invalid Tesseract TSV header", ErrOCRFailed)
+			}
 		}
 	}
 	width, height := 0, 0
 	words := make([]Word, 0)
-	for _, record := range records[1:] {
+	for _, line := range lines[1:] {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" {
+			continue
+		}
+		record := strings.Split(line, "	")
 		if len(record) != len(header) {
 			return 0, 0, nil, fmt.Errorf("%w: invalid Tesseract TSV row", ErrOCRFailed)
 		}

@@ -70,6 +70,9 @@ func TestClickTextRequiresFreshObservationWritesAndReturnsPostObservation(t *tes
 	if out["ok"] != true || snapshots != 3 || len(events) != 3 {
 		t.Fatalf("output=%#v snapshots=%d events=%v", out, snapshots, events)
 	}
+	if !strings.Contains(events[0], "to_x=-") || !strings.Contains(events[0], "to_y=-") {
+		t.Fatalf("mouse move was not normalized to signed KVMD coordinates: %v", events)
+	}
 	if _, ok := out["evidence"].(map[string]any)["post_observation"]; !ok {
 		t.Fatalf("missing post observation: %#v", out)
 	}
