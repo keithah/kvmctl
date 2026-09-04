@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/learn/entities"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn/entities"
 
 	_ "modernc.org/sqlite"
 )

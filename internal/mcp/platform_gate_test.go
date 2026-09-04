@@ -12,10 +12,10 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"kvmctl-pp-cli/internal/cli"
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/platform"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 )
 
 func TestMCPEveryRegisteredToolHasFreshTenantGate(t *testing.T) {

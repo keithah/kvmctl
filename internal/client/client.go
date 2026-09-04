@@ -7,16 +7,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/platform"
 	"html"
 	"io"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
-	"kvmctl-pp-cli/internal/platform"
 	"math"
 	"net"
 	"net/http"
@@ -308,6 +310,23 @@ func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 		cacheDir = filepath.Join(dir, "http")
 	}
 	httpClient := newHTTPClient(timeout, nil)
+	if cfg.KVMCTLInsecure || cfg.KVMCTLCA != "" {
+		tr := httpClient.Transport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: cfg.KVMCTLInsecure} // #nosec G402 -- explicit operator opt-in
+		if cfg.KVMCTLCA != "" {
+			pem, err := os.ReadFile(cfg.KVMCTLCA)
+			if err == nil {
+				pool, err := x509.SystemCertPool()
+				if err != nil || pool == nil {
+					pool = x509.NewCertPool()
+				}
+				if pool.AppendCertsFromPEM(pem) {
+					tr.TLSClientConfig.RootCAs = pool
+				}
+			}
+		}
+		httpClient.Transport = tr
+	}
 	c := &Client{
 		BaseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		Config:     cfg,

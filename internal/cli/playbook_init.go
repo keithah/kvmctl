@@ -31,9 +31,9 @@ import (
 	"strings"
 	"sync"
 
-	"kvmctl-pp-cli/internal/cli/playbooks"
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli/playbooks"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // playbookSeedSentinelFamily is the synthetic query_family used to

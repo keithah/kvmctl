@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"testing"
 
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 func openLearnings(t *testing.T) *store.Store {

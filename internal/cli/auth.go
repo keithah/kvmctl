@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/config"
 	"github.com/spf13/cobra"
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/config"
 )
 
 func newAuthCmd(flags *rootFlags) *cobra.Command {

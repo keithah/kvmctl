@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"testing"
 
-	"kvmctl-pp-cli/internal/cliutil/testenv"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil/testenv"
 )
 
 func resetPathEnv(t *testing.T) string {

@@ -9,7 +9,7 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X kvmctl-pp-cli/internal/cli.version={{ .Version }}
+      - -s -w -X github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli.version={{ .Version }}
     targets:
       - darwin_amd64
       - darwin_arm64
@@ -44,7 +44,7 @@ brews:
     repository:
       owner: keithah
       name: homebrew-tap
-    homepage: "https://github.com/keithah/kvmctl-pp-cli"
+    homepage: "https://github.com/keithah/kvmctl"
     description: "The verified REST subset used by kvmctl for KVMD-compatible GLKVM devices."
     install: |
       bin.install "kvmctl-pp-cli"

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"kvmctl-pp-cli/internal/learn"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/learn"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 // seedCandidate derives one candidate row directly through the store

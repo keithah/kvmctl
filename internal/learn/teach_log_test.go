@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"kvmctl-pp-cli/internal/cliutil"
-	"kvmctl-pp-cli/internal/cliutil/testenv"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cliutil/testenv"
 )
 
 func withTempHomeForLog(t *testing.T) string {

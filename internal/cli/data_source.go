@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"kvmctl-pp-cli/internal/client"
-	"kvmctl-pp-cli/internal/store"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/store"
 )
 
 const networkFallbackReason = "synthetic_anchor_fallback"

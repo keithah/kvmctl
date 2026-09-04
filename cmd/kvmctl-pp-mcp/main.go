@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
-	"kvmctl-pp-cli/internal/cli"
-	mcptools "kvmctl-pp-cli/internal/mcp"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/cli"
+	mcptools "github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/mcp"
 )
 
 // Transport selection order: --transport flag, then PP_MCP_TRANSPORT env,
