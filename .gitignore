@@ -1,6 +1,6 @@
-.venv/
-__pycache__/
-*.egg-info/
-evidence/*.jpg
-
-.worktrees/
+bin/
+build/
+*.mcpb
+.coverage
+coverage.out
+.DS_Store

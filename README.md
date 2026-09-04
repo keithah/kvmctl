@@ -1,195 +1,330 @@
-# kvmctl
+# Kvmctl CLI
 
-A small, safety-first command-line tool for controlling KVMD-compatible KVM devices such as PiKVM and GLKVM.
+The verified REST subset used by kvmctl for KVMD-compatible GLKVM devices. Endpoint shapes are transcribed from the PiKVM HTTP API reference and the live GLKVM probe recorded in PROBE_NOTES.md. Device-specific switch and verification workflows remain novel application code, not generated API endpoints.
 
-Use `kvmctl` to inspect a device, capture its screen, verify a machine, and—when you explicitly authorize it—select a connected machine or run a limited command.
-
-> **Status:** Experimental and hardware-tested. The client targets KVMD-compatible devices and generic profile-driven HDMI/KVM switches; profiles may need adjustment for your hardware.
-
-## What you can do
-
-- Discover device capabilities
-- Capture a JPEG snapshot of the current screen
-- Verify a named machine from the captured screen
-- Select a named machine through a configured KVM switch
-- Send individual keyboard events or mapped text through the Python client
-- Reset HID or re-arm the USB/OTG connection when needed
-- Run explicitly allowlisted SSH commands through a configured integration
-- Consume the same semantic operations from the Python API or MCP surface
+Created by [@keithah](https://github.com/keithah).
 
 ## Install
 
-```sh
-python -m venv .venv
-.venv/bin/pip install .
+The recommended path installs both the `kvmctl-pp-cli` binary and the `pp-kvmctl` agent skill (Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, and other agents supported by the upstream [`skills`](https://github.com/vercel-labs/skills) CLI) in one shot:
+
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl
 ```
 
-For development:
+For CLI only (no skill):
 
-```sh
-.venv/bin/pip install -e '.[dev]'
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl --cli-only
 ```
 
-The package includes the WebSocket client used to keep the stream alive and the Python OCR adapter used when device OCR is unavailable. Local OCR also requires the `tesseract` executable on `PATH`.
+For skill only — installs the skill into the same agents as the default command above, but skips the CLI binary (use this to update or reinstall just the skill):
 
-## Authentication and read-only checks
-
-Keep credentials out of shell history and source control. Use an existing KVMD token when available:
-
-```sh
-export KVMCTL_TOKEN='short-lived-device-token'
-kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" capabilities
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl --skill-only
 ```
 
-Login credentials are also supported. Prefer a secret manager or an environment injection mechanism rather than typing passwords into command history:
+To constrain the skill install to one or more specific agents (repeatable — agent names match the [`skills`](https://github.com/vercel-labs/skills) CLI):
 
-```sh
-kvmctl --url https://kvm.example.test \
-  --user "$KVMCTL_USER" --password "$KVMCTL_PASSWORD" capabilities
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl --agent claude-code
+npx -y @mvanhorn/printing-press-library install kvmctl --agent claude-code --agent codex
 ```
 
-Use a trusted CA bundle where possible. `--insecure` is available for explicitly trusted devices using self-signed certificates.
+### Without Node (Go fallback)
 
-Capture and verify the current screen:
+If `npx` isn't available (no Node, offline), install the CLI directly via Go (requires Go 1.26.6 or newer):
 
-```sh
-kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" \
-  snapshot --out /tmp/kvm-screen.jpg
-kvmctl --url https://kvm.example.test --token "$KVMCTL_TOKEN" \
-  verify workstation
+```bash
+go install github.com/mvanhorn/printing-press-library/library/devices/kvmctl/cmd/kvmctl-pp-cli@latest
 ```
 
-A virtual-hosted device can be addressed with `--host` (or `KVMCTL_HOST` for MCP and library configuration):
+This installs the CLI only — no skill.
 
-```sh
-kvmctl --url https://kvm.example.test --host kvm.example.test \
-  --token "$KVMCTL_TOKEN" capabilities
+### Pre-built binary
+
+Download a pre-built binary for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/kvmctl-current). On macOS, clear the Gatekeeper quarantine: `xattr -d com.apple.quarantine <binary>`. On Unix, mark it executable: `chmod +x <binary>`.
+
+<!-- pp-hermes-install-anchor -->
+## Install for Hermes
+
+Install the CLI binary first. The installer writes binaries to a per-user managed bin directory by default: `$HOME/.local/bin` on macOS/Linux and `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows.
+
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl --cli-only
 ```
 
-## Scenario: select and verify a machine
+Then install the focused Hermes skill.
 
-State-changing operations require two deliberate confirmations: `--yes` and an explicit transport. This redacted example shows the generic HDMI/KVM selection workflow:
+From the Hermes CLI:
 
-```sh
-export KVM_URL='https://<glkvm-address>'
-export KVM_HOST='glkvm.local'
-export KVM_USER='admin'
-# Retrieve KVM_PASSWORD from your secret manager at runtime.
-export KVM_PASSWORD='***'
-
-kvmctl \
-  --url "$KVM_URL" --host "$KVM_HOST" \
-  --user "$KVM_USER" --password "$KVM_PASSWORD" \
-  --insecure --yes --transport kvm select pve2
+```bash
+hermes skills install mvanhorn/printing-press-library/cli-skills/pp-kvmctl --force
 ```
 
-The command re-arms the USB/OTG gadget when needed, sends the profile's held-key sequence, retains the authenticated stream WebSocket, and verifies the resulting screen. A successful result is structured JSON, for example:
+Inside a Hermes chat session:
+
+```bash
+/skills install mvanhorn/printing-press-library/cli-skills/pp-kvmctl --force
+```
+
+Restart the Hermes session or gateway if the newly installed skill is not visible immediately.
+
+## Install for OpenClaw
+Install both the CLI binary and the focused OpenClaw skill. The installer defaults binaries to a per-user bin directory (`$HOME/.local/bin` on macOS/Linux, `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows):
+
+```bash
+npx -y @mvanhorn/printing-press-library install kvmctl --agent openclaw
+```
+
+Restart the OpenClaw session or gateway if the newly installed skill is not visible immediately.
+
+## Use with Claude Desktop
+
+This CLI ships an [MCPB](https://github.com/modelcontextprotocol/mcpb) bundle — Claude Desktop's standard format for one-click MCP extension installs (no JSON config required).
+
+To install:
+
+1. Download the `.mcpb` for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/kvmctl-current).
+2. Double-click the `.mcpb` file. Claude Desktop opens and walks you through the install.
+3. Fill in `KVMCTL_KVMD_TOKEN` when Claude Desktop prompts you.
+
+Requires Claude Desktop 1.0.0 or later. Pre-built bundles ship for macOS Apple Silicon (`darwin-arm64`) and Windows (`amd64`, `arm64`); for other platforms, use the manual config below.
+
+<details>
+<summary>Manual JSON config (advanced)</summary>
+
+If you can't use the MCPB bundle (older Claude Desktop, unsupported platform), install the MCP binary and configure it manually.
+
+
+```bash
+go install github.com/mvanhorn/printing-press-library/library/devices/kvmctl/cmd/kvmctl-pp-mcp@latest
+```
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
-  "operation": "select",
-  "transport": "kvm",
-  "read_only": false,
-  "ok": true,
-  "evidence": {
-    "machine": "pve2",
-    "port": 2,
-    "verified": true,
-    "state": "verified",
-    "detail": "prompt pattern match"
+  "mcpServers": {
+    "kvmctl": {
+      "command": "kvmctl-pp-mcp",
+      "env": {
+        "KVMCTL_KVMD_TOKEN": "<your-key>"
+      }
+    }
   }
 }
 ```
 
-The included four-port HID profile has been tested with a Right Ctrl ×2, port digit, Enter recipe; each key is sent sequentially and held briefly. See [`docs/TH41-3.md`](docs/TH41-3.md) for that tested profile and [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) for operational recovery.
+</details>
 
-If you omit either safety gate, `kvmctl` refuses to perform the operation. Unknown or disabled machine names never generate HID traffic.
+## Quick Start
 
-## Keyboard input to the selected target
+### 1. Install
 
-The GLKVM HID path does pass keyboard input through to whichever target is currently selected. The Python client currently supports:
+See [Install](#install) above.
 
-```python
-client.press_key("Enter")
-client.type_text("root")
+### 2. Set Up Credentials
+
+Get your API key from your API provider's developer portal. The key typically looks like a long alphanumeric string.
+
+```bash
+export KVMCTL_KVMD_TOKEN="<paste-your-key>"
+```
+To persist credentials, use `echo "$TOKEN" | kvmctl-pp-cli auth set-token`. Stored secrets live in `credentials.toml` under the data directory, not in `config.toml`.
+
+### 3. Verify Setup
+
+```bash
+kvmctl-pp-cli doctor
 ```
 
-It also exposes lower-level `key_down()` and `key_up()` methods for a deliberately controlled key hold. Key names use browser-style KVMD names such as `KeyA`, `ControlRight`, `Digit2`, and `Enter`; `type_text()` maps supported printable ASCII characters and manages `ShiftLeft` for uppercase/shifted symbols.
+This checks your configuration and credentials.
 
-The CLI and MCP now expose the same guarded controls: `send-text`, `send-keys`, `hold-key`, `release-all`, `mouse-move`, `mouse-move-pct`, `mouse-click`, `mouse-scroll`, `ocr-screenshot`, and `ocr-click`. Input actions require `--yes` on the CLI or `KVMCTL_WRITE_ENABLED=1` for MCP. The CLI's `exec-command` operation remains a separate allowlisted SSH feature and does not type through the KVM.
+### 4. Try Your First Command
 
-## Recovery scenarios
-
-When the HID path is stuck but no target selection is needed:
-
-```sh
-kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
-  --user "$KVM_USER" --password "$KVM_PASSWORD" \
-  --insecure --yes hid-reset
+```bash
+kvmctl-pp-cli info
 ```
 
-To re-arm the USB gadget after a failed selection:
+## Usage
 
-```sh
-kvmctl --url "$KVM_URL" --host "$KVM_HOST" \
-  --user "$KVM_USER" --password "$KVM_PASSWORD" \
-  --insecure --yes rearm-otg
+Run `kvmctl-pp-cli --help` for the full command reference and flag list.
+
+## Paths & environment variables
+
+This CLI separates local files into four path kinds:
+
+| Kind | Contents |
+|------|----------|
+| `config` | User-editable settings such as `config.toml` and saved profiles |
+| `data` | Durable local data: `credentials.toml`, `data.db`, cookies, browser-session proof files, and other auth sidecars |
+| `state` | Runtime state such as persisted queries, jobs, and `teach.log` |
+| `cache` | Regenerable HTTP/cache files |
+
+Each kind resolves independently. The ladder is:
+
+1. Per-kind env var: `KVMCTL_CONFIG_DIR`, `KVMCTL_DATA_DIR`, `KVMCTL_STATE_DIR`, or `KVMCTL_CACHE_DIR`
+2. `--home <dir>` for this invocation
+3. `KVMCTL_HOME` for a flat relocated root
+4. XDG env vars: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`
+5. Platform defaults matching existing installs
+
+For containers and agent sandboxes, prefer a single relocated root:
+
+```bash
+export KVMCTL_HOME=/srv/kvmctl
+kvmctl-pp-cli doctor
 ```
 
-A temporary snapshot HTTP 503 after OTG re-arm can be expected. The recovery path nudges the encoder, reopens the authenticated stream, retries the snapshot, and only then verifies the target. Do not enter target credentials during recovery.
+Under `KVMCTL_HOME=/srv/kvmctl`, the four dirs resolve to `/srv/kvmctl/config`, `/srv/kvmctl/data`, `/srv/kvmctl/state`, and `/srv/kvmctl/cache`.
 
-## Optional live smoke test
+MCP servers do not receive CLI flags from the host. Put relocation in the host `env` block:
 
-The live test is read-only: it discovers capabilities and requests one snapshot. It does not select ports, send HID events, or change OTG state.
-
-```sh
-KVMCTL_LIVE_URL=https://kvm.example.test \
-KVMCTL_LIVE_TOKEN="$KVMCTL_TOKEN" \
-KVMCTL_LIVE_HOST=kvm.example.test \
-PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_live_hardware.py
+```json
+{
+  "mcpServers": {
+    "kvmctl": {
+      "command": "kvmctl-pp-mcp",
+      "env": {
+        "KVMCTL_HOME": "/srv/kvmctl"
+      }
+    }
+  }
+}
 ```
 
-## Standalone CLI named workflows
+Precedence matters in fleets: an ambient per-kind variable such as `KVMCTL_DATA_DIR` overrides an explicit `--home` for that kind. Use `KVMCTL_HOME` or the per-kind variables for durable fleet relocation; treat `--home` as the weaker per-invocation lever.
 
-Named workflows are loaded from a declarative JSON file (no Python, shell, HID payloads, loops, or nested workflows are accepted). Set `KVMCTL_WORKFLOWS_FILE` or pass `--workflows ./workflows.json` on **each** invocation. Authorization is persisted in the mode-600 `KVMCTL_AUTH_FILE` store so the token can be handed to a later process:
+Relocation is one-way. Unsetting `KVMCTL_HOME` does not move files back to platform defaults, and `doctor` cannot find credentials left under a former root. Move the files manually before unsetting relocation variables.
 
-```sh
-kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json workflow-list
-kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json workflow-inspect open-terminal-and-identify --revision "$REVISION"
-kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json --yes workflow-authorize open-terminal-and-identify --revision "$REVISION"
-kvmctl --url "$KVM_URL" --token "$KVM_TOKEN" --workflows ./workflows.json --yes workflow-execute open-terminal-and-identify --revision "$REVISION" --approval-token "$APPROVAL_TOKEN"
+Existing installs keep working because the platform-default rung matches the legacy layout. On the first auth write, stored secrets leave `config.toml` and are consolidated into `credentials.toml` under the data directory. Run `kvmctl-pp-cli doctor --fail-on warn` to check path and credential-location warnings in automation.
+
+## Commands
+
+### hid
+
+Manage hid
+
+- **`kvmctl-pp-cli hid get-state`** - Get state
+- **`kvmctl-pp-cli hid reset`** - Reset
+- **`kvmctl-pp-cli hid send-key`** - Send key
+- **`kvmctl-pp-cli hid send-mouse-button`** - Send mouse button
+- **`kvmctl-pp-cli hid send-mouse-move`** - Send mouse move
+- **`kvmctl-pp-cli hid send-mouse-wheel`** - Send mouse wheel
+- **`kvmctl-pp-cli hid send-shortcut`** - Send shortcut
+
+### info
+
+Manage info
+
+- **`kvmctl-pp-cli info`** - Get
+
+### kvmd-compatible-kvm-auth
+
+Manage kvmd compatible kvm auth
+
+- **`kvmctl-pp-cli kvmd-compatible-kvm-auth check`** - Check
+- **`kvmctl-pp-cli kvmd-compatible-kvm-auth login`** - Login
+- **`kvmctl-pp-cli kvmd-compatible-kvm-auth logout`** - Logout
+
+### streamer
+
+Manage streamer
+
+- **`kvmctl-pp-cli streamer get-snapshot`** - Get snapshot
+- **`kvmctl-pp-cli streamer set-params`** - Set params
+
+### system
+
+Manage system
+
+- **`kvmctl-pp-cli system`** - Set otg functions
+
+
+### Self-learning loop
+
+This CLI caches per-question discovery so repeat queries skip the walk and structurally similar queries get answered via entity substitution. The loop also self-captures: every invocation is journaled locally, and failed-flag corrections plus fresh teaches surface as candidates on the next `recall` for confirm/reject judgment. Agents call `recall` before discovery and fire `teach &` after answering. See the `## Automatic learning` section in `SKILL.md` for the full protocol.
+
+- **`kvmctl-pp-cli recall <query>`** - Look up cached resources for a query before running discovery
+- **`kvmctl-pp-cli teach`** - Record a query -> resource mapping (silent on success, safe to background with `&`)
+- **`kvmctl-pp-cli learnings list`** - Inspect taught rows
+- **`kvmctl-pp-cli learnings forget <query>`** - Undo a teach
+- **`kvmctl-pp-cli learnings candidates`** - List auto-captured candidates awaiting confirm/reject
+- **`kvmctl-pp-cli learnings stats`** - Local loop metrics: recall hit rate, teach-to-reuse, playbook resolution, candidate counts
+- **`kvmctl-pp-cli teach-pattern`** - Install a query/resource template up front
+- **`kvmctl-pp-cli teach-lookup`** - Add an entity mapping (e.g. country code, team alias) for pattern substitution
+
+Pass `--no-learn` or set `KVMCTL_NO_LEARN=true` to disable the loop for deterministic flows.
+
+The local store's schema version stamp is one-way: once this version of `kvmctl-pp-cli` opens the database, older binaries refuse it with a version error — upgrade the binary rather than downgrading.
+
+## Output Formats
+
+```bash
+# Human-readable table (default in terminal, JSON when piped)
+kvmctl-pp-cli info
+
+# JSON for scripting and agents
+kvmctl-pp-cli info --json
+# Filter to specific fields
+kvmctl-pp-cli info --json --select ok,result
+
+# Dry run — show the request without sending
+kvmctl-pp-cli info --dry-run
+
+# Agent mode — JSON + compact + no prompts in one flag
+kvmctl-pp-cli info --agent
 ```
 
-The approval token is opaque, single-use, expiry-bound, and bound to the exact workflow revision, target, session, endpoint, and canonical plan hash. Keep it out of logs. Inline sequences use the same `sequence-plan`, `sequence-authorize`, then `sequence-execute --approval-token ...` lifecycle.
+## Agent Usage
 
-The CLI persists only a MAC-authenticated, verified selection record for up to one hour. Override its location with `KVMCTL_SESSION_FILE` (default `~/.cache/kvmctl/session.json`). Persistence is a convenience, not proof of live device state: execution still rechecks the verified target/session at the side-effect boundary.
+This CLI is designed for AI agent consumption:
 
-Install the optional MCP adapter with `.venv/bin/pip install -e '.[mcp]'`, then configure an MCP client to launch `kvmctl-mcp`. It uses `KVMCTL_URL` and `KVMCTL_TOKEN` (or the optional login variables), is read-only by default, and returns snapshots as native MCP image content. Writes require `KVMCTL_WRITE_ENABLED=1` plus each operation's transport and policy requirements. See [`docs/MCP.md`](docs/MCP.md).
+- **Non-interactive** - never prompts, every input is a flag
+- **Pipeable** - `--json` output to stdout, errors to stderr
+- **Filterable** - `--select <field>[,<field>...]` returns only fields you need
+- **Previewable** - `--dry-run` shows the request without sending
+- **Explicit retries** - add `--idempotent` to create retries when a no-op success is acceptable
+- **Explicit confirmation** - `--agent` does not imply `--yes`; pass `--yes` separately only after the target, arguments, and side effects are clear
+- **Piped input** - write commands can accept structured input when their help lists `--stdin`
+- **Offline-friendly** - sync/search commands can use the local SQLite store when available
+- **Agent-safe by default** - no colors or formatting unless `--human-friendly` is set
 
-## Target-bound sequences and named workflows
+Exit codes: `0` success, `2` usage error, `3` not found, `4` auth error, `5` API error, `7` rate limited, `10` config error.
 
-Sequences are declarative, target-bound plans. The safe lifecycle is **plan → authorize → execute**:
+## Health Check
 
-```sh
-kvmctl --url "$KVM_URL" sequence-plan --plan ./plan.json
-kvmctl --url "$KVM_URL" --yes sequence-authorize --plan ./plan.json --ttl 30
-kvmctl --url "$KVM_URL" --yes sequence-execute --plan ./plan.json --ttl 30 --approval-token "$APPROVAL_TOKEN"
+```bash
+kvmctl-pp-cli doctor
 ```
 
-`sequence-plan` is read-only. Authorization and execution require `--yes`, and every invocation must use the already selected and verified target session; a target mismatch, stale plan hash, expired authorization, or unexpected screen aborts before further input. Plans are bounded to at most 10 actions, 30 seconds total, and 5 seconds per held key. Supported actions include text, validated key chords, bounded key holds, release-all, mouse movement/click/scroll, and waits. Results contain a plan hash, target, progress, and cleanup status, never plan secrets.
+Verifies configuration, credentials, and connectivity to the API.
 
-For repeatable operations, use the named workflow commands `workflow-list`, `workflow-inspect NAME [--revision REVISION] [--target TARGET]`, and `workflow-execute NAME --revision REVISION [--target TARGET]`. Workflow revisions are derived from the canonical name, target binding, and plan; callers must supply the current revision. Workflows are listed in deterministic name order and inspection redacts secret-like text. Inspection accepts a revision without `--target`; execution and authorization still require target binding, and target-independent workflows require an explicit invocation target before execution.
+## Configuration
 
-The executor aborts on every unexpected state and records bounded, deterministic journal checkpoints. When no journal is supplied, checkpoints go to the mode-600 `KVMCTL_JOURNAL_FILE` path (default `~/.cache/kvmctl/semantic-journal.jsonl`), a private per-user location rather than a shared temporary directory. Keyboard actions send KVM HID input to the selected target. `exec-command` is different: it runs an explicitly allowlisted SSH `exec-command` transport and never types a shell command through the KVM keyboard. All execution paths release held keys, close an owned stream, release the device lock, and report cleanup failures.
+Run `kvmctl-pp-cli doctor` to see the resolved config, data, state, and cache directories. The platform-default config path is `~/.config/kvmd-compatible-kvm-pp-cli/config.toml`; `--home`, `KVMCTL_HOME`, and per-kind env vars can relocate it.
 
-## Development
+Static request headers can be configured under `headers`; per-command header overrides take precedence.
 
-```sh
-.venv/bin/python -m pytest tests -q
-```
+Environment variables:
 
-Device interactions in the regular test suite use mocked transports. Live hardware tests are opt-in and skipped unless their environment variables are configured.
+| Name | Kind | Required | Description |
+| --- | --- | --- | --- |
+| `KVMCTL_KVMD_TOKEN` | per_call | Yes | Set to your API credential. |
 
-## License
+### agentcookie (optional)
 
-See the repository license file for project licensing information.
+If you use agentcookie to sync secrets across machines, this CLI auto-adopts agentcookie-managed credentials with no extra setup. When the daemon writes to this CLI's config, `kvmctl-pp-cli doctor` reports `agentcookie: detected` and `auth-status` labels the source as `agentcookie`. Skip this section if you don't use agentcookie - the CLI works the same as any other.
+
+## Troubleshooting
+**Authentication errors (exit code 4)**
+- Run `kvmctl-pp-cli doctor` to check credentials
+- Verify the environment variable is set: `echo $KVMCTL_KVMD_TOKEN`
+**Not found errors (exit code 3)**
+- Check the resource ID is correct
+- Run the `list` command to see available items
+
+---
+
+Generated by [CLI Printing Press](https://github.com/mvanhorn/cli-printing-press)
