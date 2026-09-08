@@ -38,6 +38,58 @@ func (c *Client) KVMDLogin(ctx context.Context, user, password string) (string, 
 	return v.Result.Token, nil
 }
 
+// KVMDOtgFunctions applies the Comet gadget configuration. The query
+// parameters are intentional: this firmware ignores equivalent JSON bodies.
+func (c *Client) KVMDOtgFunctions(ctx context.Context, enableKeyboard, enableMouse, enableMouseAlt, startCDROM, startFlash bool) error {
+	params := map[string]string{
+		"enable_keyboard":  fmt.Sprintf("%t", enableKeyboard),
+		"enable_mouse":     fmt.Sprintf("%t", enableMouse),
+		"enable_mouse_alt": fmt.Sprintf("%t", enableMouseAlt),
+		"enable_camera":    "false",
+		"enable_mic":       "false",
+		"enable_mtp":       "false",
+		"start_cdrom":      fmt.Sprintf("%t", startCDROM),
+		"start_flash":      fmt.Sprintf("%t", startFlash),
+	}
+	_, _, err := c.PostWithParams(ctx, "/api/system/otg_functions", params, map[string]any{})
+	return err
+}
+
+// KVMDRearmOTG re-enumerates the HID gadget without leaving virtual storage
+// enabled. This is required by some TH41-3/Comet firmware combinations before
+// the switch will recognize sequential hotkeys.
+func (c *Client) KVMDRearmOTG(ctx context.Context) error {
+	if err := c.KVMDOtgFunctions(ctx, true, true, true, true, true); err != nil {
+		return fmt.Errorf("enable OTG gadget: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = c.KVMDOtgFunctions(cleanupCtx, true, true, true, false, false)
+		return ctx.Err()
+	case <-time.After(8 * time.Second):
+	}
+	if err := c.KVMDOtgFunctions(ctx, true, true, true, false, false); err != nil {
+		return fmt.Errorf("disable virtual storage: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(12 * time.Second):
+	}
+	return nil
+}
+
+// KVMDNudgeStreamer wakes ustreamer after a USB gadget re-enumeration.
+func (c *Client) KVMDNudgeStreamer(ctx context.Context) error {
+	_, _, err := c.PostWithParams(ctx, "/api/streamer/set_params", map[string]string{
+		"desired_fps": "40",
+		"quality":     "80",
+	}, map[string]any{})
+	return err
+}
+
 // KVMDSnapshot returns a fresh JPEG snapshot. A KVMD streamer may return 503
 // until a stream WebSocket is held open and initialized, so retries remain
 // bounded, context-aware, and inside the temporary read-only lease.
