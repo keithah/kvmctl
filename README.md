@@ -140,8 +140,7 @@ Use the purpose-built commands for the bounded observe → act → verify loop. 
 ```bash
 # Configure a local OCR command. It receives screenshot bytes on stdin.
 export KVMCTL_OCR_COMMAND=tesseract
-# Default protocol is Tesseract TSV. For a custom structured command, use JSON:
-# export KVMCTL_OCR_PROTOCOL=json
+# The built-in Tesseract adapter emits TSV; use that default protocol.
 
 kvmctl-pp-cli observe --agent
 kvmctl-pp-cli act click-text "Advanced" --observation <observation-id> --yes --agent
