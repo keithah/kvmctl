@@ -18,6 +18,7 @@ import (
 	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/client"
 	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/results"
 	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/sequence"
+	"github.com/mvanhorn/printing-press-library/library/devices/kvmctl/internal/switcher"
 )
 
 var Operations = []string{
@@ -290,24 +291,50 @@ func opSelect(ctx context.Context, c *client.Client, args map[string]any) (resul
 	if machine == "" {
 		machine, _ = args["target"].(string)
 	}
-	if strings.TrimSpace(machine) == "" {
-		return results.Operation{}, fmt.Errorf("machine is required")
+	port, ok := machinePort(machine)
+	if !ok {
+		return results.Operation{}, fmt.Errorf("unknown machine %q; expected pve1, pve2, kodi, or pve3", machine)
 	}
 	verifyPolicy, _ := args["verify_policy"].(string)
 	if verifyPolicy != "" && verifyPolicy != "none" && verifyPolicy != "frame_change" && verifyPolicy != "ocr_identity" && verifyPolicy != "prompt_pattern" {
 		return results.Operation{}, fmt.Errorf("unsupported verify_policy")
 	}
-	var settleS float64 = 5
-	if v, ok := floatArg(args, "settle_s"); ok {
-		if v < 0 || v > 60 {
-			return results.Operation{}, fmt.Errorf("settle_s out of range")
-		}
-		settleS = v
+	if err := c.KVMDRearmOTG(ctx); err != nil {
+		return results.Operation{}, err
 	}
-	_ = c
-	rearm, _ := args["rearm"].(bool)
-	return unavailableOperation("select", false, map[string]any{"machine": machine, "verify_policy": verifyPolicy, "rearm": rearm, "settle_s": settleS}, errors.New("KVM target-selection runner is not configured")), nil
+	if err := c.KVMDNudgeStreamer(ctx); err != nil {
+		return results.Operation{}, fmt.Errorf("nudge streamer: %w", err)
+	}
+	hid := clientHID{c: c}
+	events, err := switcher.Execute(ctx, hid, switcher.TH413Held, port, nil)
+	if err != nil {
+		return results.Operation{}, err
+	}
+	return results.Build("select", "kvm", true, "", false, true, "accepted", map[string]any{
+		"machine": machine, "port": port, "profile": switcher.TH413Held.Name,
+		"event_count": len(events), "verify_policy": verifyPolicy,
+	}, nil), nil
 }
+
+func machinePort(machine string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(machine)) {
+	case "pve1", "port1", "1":
+		return 1, true
+	case "pve2", "port2", "2":
+		return 2, true
+	case "kodi", "port3", "3":
+		return 3, true
+	case "pve3", "port4", "4":
+		return 4, true
+	default:
+		return 0, false
+	}
+}
+
+type clientHID struct{ c *client.Client }
+
+func (h clientHID) KeyDown(ctx context.Context, key string) error { return h.c.KVMDKey(ctx, key, true) }
+func (h clientHID) KeyUp(ctx context.Context, key string) error   { return h.c.KVMDKey(ctx, key, false) }
 
 func opHIDReset(ctx context.Context, c *client.Client) (results.Operation, error) {
 	_ = ctx
@@ -316,9 +343,12 @@ func opHIDReset(ctx context.Context, c *client.Client) (results.Operation, error
 }
 
 func opRearmOTG(ctx context.Context, c *client.Client) (results.Operation, error) {
-	_ = ctx
-	_ = c
-	return unavailableOperation("rearm_otg", false, nil, errors.New("OTG rearm runner is not configured")), nil
+	if err := c.KVMDRearmOTG(ctx); err != nil {
+		return results.Operation{}, err
+	}
+	return results.Build("rearm_otg", "kvm", true, "", false, true, "accepted", map[string]any{
+		"virtual_storage": "disabled", "keyboard": "enabled", "mouse": "enabled",
+	}, nil), nil
 }
 
 func opSendText(ctx context.Context, c *client.Client, args map[string]any) (results.Operation, error) {
